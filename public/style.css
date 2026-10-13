@@ -245,4 +245,11 @@ details.bulk summary{cursor:pointer;color:var(--brand);font-weight:600}
   .snav .btn{flex:1}
   .shead{gap:10px}
 }
+/* excel export */
+.pickbox{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px 12px;margin-top:12px;max-height:260px;overflow:auto;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface2)}
+.pk{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--ink);cursor:pointer;min-width:0}
+.pk input{min-height:0;flex:none}
+.xp th{text-align:center}
+.xp td.num{text-align:center}
+.xp tr.sumrow td{font-weight:600;background:var(--surface2)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}

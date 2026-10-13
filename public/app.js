@@ -30,7 +30,7 @@ var DEFAULT_CATS=[
 /* ---------- state ---------- */
 var S={settings:{cats:clone(DEFAULT_CATS)},classes:[],att:{}};
 var U={tab:'home',cls:null,mapOpen:false,student:null,seg:'grades',gmode:'quick',pad:null,mapMode:'open',filter:'all',q:'',
-  attDate:today(),exScope:'class',exStudent:null,exType:'all',exAtt:true,mcat:null,mmax:null,focus:null,_ask:null};
+  attDate:today(),exScope:'class',exStudent:null,exPick:[],exType:'all',exAtt:false,mcat:null,mmax:null,focus:null,_ask:null};
 
 function normalize(d){
   var o={settings:{cats:[]},classes:[],att:{}};
@@ -362,36 +362,52 @@ function vStAtt(c,s){
       return '<tr><td class="num">'+d+'</td><td><select data-ch="attDay" data-date="'+d+'">'+ATT_KEYS.map(function(k){return '<option value="'+k+'"'+(v===k?' selected':'')+'>'+ATT[k].t+'</option>';}).join('')+'<option value="">مسح التسجيل</option></select></td></tr>';}).join('')+'</tbody></table></div>':'<p class="empty-note">لا توجد أيام مسجلة لهذا الطالب.</p>')+'</section>';
 }
 function exOptions(){
-  return '<div class="opts"><label class="opt'+(U.exType==='all'?' on':'')+'"><input type="radio" name="exType" value="all" data-ch="exOpt" data-k="exType"'+(U.exType==='all'?' checked':'')+'><div><b>كل الدرجات المدخلة</b><span>صف لكل درجة: النوع، رقم الدرجة، درجة الطالب، النهائية، النسبة، التاريخ.</span></div></label>'+
-    '<label class="opt'+(U.exType==='avg'?' on':'')+'"><input type="radio" name="exType" value="avg" data-ch="exOpt" data-k="exType"'+(U.exType==='avg'?' checked':'')+'><div><b>متوسط الدرجات حسب التصنيف</b><span>متوسط كل نوع من الدرجات (اختبارات، واجبات، مشاركة…) والإجمالي.</span></div></label></div>'+
-    (U.exType==='avg'?'<label class="chk"><input type="checkbox" data-ch="exOpt" data-k="exAtt"'+(U.exAtt?' checked':'')+'> تضمين ملخص الحضور والغياب</label>':'');
+  return '<div class="opts"><label class="opt'+(U.exType==='all'?' on':'')+'"><input type="radio" name="exType" value="all" data-ch="exOpt" data-k="exType"'+(U.exType==='all'?' checked':'')+'><div><b>كل الدرجات المدخلة</b><span>صف لكل طالب وعمود لكل درجة (اختبار قصير 1، 2، 3 …) مع المجموع والنسبة، وورقة ثانية بالسجل التفصيلي.</span></div></label>'+
+    '<label class="opt'+(U.exType==='avg'?' on':'')+'"><input type="radio" name="exType" value="avg" data-ch="exOpt" data-k="exType"'+(U.exType==='avg'?' checked':'')+'><div><b>متوسط الدرجات حسب التصنيف</b><span>صف لكل طالب وعمود لمتوسط كل نوع من الدرجات (اختبارات، واجبات، مشاركة…) مع الإجمالي.</span></div></label></div>'+
+    '<label class="chk"><input type="checkbox" data-ch="exOpt" data-k="exAtt"'+(U.exAtt?' checked':'')+'> إضافة أعمدة الحضور والغياب</label>';
 }
 function vStExport(c,s){
-  return '<section class="card"><div class="cardhead"><h2>التصدير</h2></div><p class="muted">اختر نوع التصدير ثم صدّر درجات هذا الطالب أو درجات كل طلاب الفصل. يُنزَّل الملف بصيغة CSV ويُفتح في Excel.</p>'+exOptions()+
+  return '<section class="card"><div class="cardhead"><h2>التصدير إلى Excel</h2></div><p class="muted">اختر نوع التصدير، ثم صدّر درجات هذا الطالب أو كل طلاب الفصل أو طلاباً تختارهم. يُنزَّل الملف بصيغة Excel (xlsx): اسم الطالب في الصف، ونوع الدرجة في العمود.</p>'+exOptions()+
     '<div class="row"><button type="button" class="btn pri" data-act="doExport" data-scope="student" data-sid="'+s.id+'">تصدير درجات '+esc(s.name)+'</button>'+
-    '<button type="button" class="btn" data-act="doExport" data-scope="class" data-sid="'+s.id+'">تصدير درجات كل الفصل</button></div></section>';
+    '<button type="button" class="btn" data-act="doExport" data-scope="class" data-sid="'+s.id+'">تصدير كل الفصل</button>'+
+    '<button type="button" class="btn ghost" data-act="exPickFromStudent">اختيار طلاب معينين…</button></div></section>';
 }
 
 /* export tab */
-function previewTable(ex){
-  if(!ex.rows.length)return '<p class="empty-note">لا توجد بيانات للتصدير.</p>';
-  var shown=ex.rows.slice(0,40);
-  return '<div class="tablewrap"><table><thead><tr>'+ex.head.map(function(h){return '<th>'+esc(h)+'</th>';}).join('')+'</tr></thead><tbody>'+shown.map(function(r){return '<tr>'+r.map(function(v){return '<td class="'+(typeof v==='number'?'num':'')+'">'+esc(v)+'</td>';}).join('')+'</tr>';}).join('')+'</tbody></table></div>'+
-    (ex.rows.length>shown.length?'<p class="muted" style="margin-top:8px">المعاينة تعرض أول '+shown.length+' صفاً من '+ex.rows.length+'. الملف المُصدَّر يحتوي كل الصفوف.</p>':'');
+function previewHtml(sh){
+  if(!sh.rows.length)return '<p class="empty-note">لا توجد بيانات للتصدير.</p>';
+  var shown=sh.rows.slice(0,40);
+  var h1=sh.head1.map(function(h){return '<th colspan="'+(h.cs||1)+'" rowspan="'+(h.rs||1)+'">'+esc(h.t)+'</th>';}).join('');
+  var h2=sh.head2?'<tr>'+sh.head2.filter(function(t){return t!=null;}).map(function(t){return '<th>'+esc(t)+'</th>';}).join('')+'</tr>':'';
+  var body=shown.map(function(r,i){
+    var sum=sh.sum&&sh.sum.indexOf(i)>=0;
+    return '<tr'+(sum?' class="sumrow"':'')+'>'+r.map(function(v,j){return '<td class="'+(typeof v==='number'?'num':'')+'">'+esc(v)+'</td>';}).join('')+'</tr>';
+  }).join('');
+  return '<div class="tablewrap"><table class="xp"><thead><tr>'+h1+'</tr>'+h2+'</thead><tbody>'+body+'</tbody></table></div>'+
+    (sh.rows.length>shown.length?'<p class="muted" style="margin-top:8px">المعاينة تعرض أول '+shown.length+' صفاً من '+sh.rows.length+'. ملف Excel يحتوي كل الصفوف.</p>':'');
 }
 function vExport(){
   var c=curClass();if(!c)return vNoClass();
   var list=sortedStudents(c);
   if(!U.exStudent||!byId(c,U.exStudent))U.exStudent=list.length?list[0].id:null;
-  var scope=U.exScope==='student'&&U.exStudent?'student':'class';
-  var ex=buildExport(c,scope,U.exStudent,U.exType,U.exAtt);
+  U.exPick=(U.exPick||[]).filter(function(id){return byId(c,id);});
+  var scope=U.exScope;if(scope==='student'&&!U.exStudent)scope='class';
+  var wb=buildWorkbook(c,scope,U.exStudent,U.exType,U.exAtt);
+  var scopes=[['class','كل طلاب الفصل'],['student','طالب واحد'],['pick','طلاب معينون']];
+  var extra='';
+  if(scope==='student'){
+    extra='<select data-ch="exStudent" aria-label="الطالب">'+list.map(function(s){return '<option value="'+s.id+'"'+(s.id===U.exStudent?' selected':'')+'>'+esc(s.name)+'</option>';}).join('')+'</select>';
+  }else if(scope==='pick'){
+    extra='<div style="width:100%"><div class="pickbox">'+list.map(function(s){return '<label class="pk"><input type="checkbox" data-ch="exPickOne" data-id="'+s.id+'"'+(U.exPick.indexOf(s.id)>=0?' checked':'')+'> '+esc(s.name)+'</label>';}).join('')+'</div>'+
+      '<div class="row" style="align-items:center"><button type="button" class="btn ghost sm" data-act="exPickAll">تحديد الكل</button><button type="button" class="btn ghost sm" data-act="exPickNone">إلغاء التحديد</button><span class="muted">محدد '+U.exPick.length+' من '+list.length+'</span></div></div>';
+  }
+  var args='data-scope="'+scope+'" data-sid="'+(U.exStudent||'')+'"';
   return '<div class="head"><h1>تصدير الدرجات</h1>'+classPick()+'</div>'+
     '<section class="card"><h2>ما الذي تريد تصديره؟</h2>'+
-    '<div class="row" style="align-items:center"><div class="seg"><button type="button" class="'+(scope==='class'?'on':'')+'" data-act="exScope" data-s="class">كل طلاب الفصل</button><button type="button" class="'+(scope==='student'?'on':'')+'" data-act="exScope" data-s="student">طالب واحد</button></div>'+
-    (scope==='student'?'<select data-ch="exStudent" aria-label="الطالب">'+list.map(function(s){return '<option value="'+s.id+'"'+(s.id===U.exStudent?' selected':'')+'>'+esc(s.name)+'</option>';}).join('')+'</select>':'')+'</div>'+
+    '<div class="row" style="align-items:center"><div class="seg">'+scopes.map(function(x){return '<button type="button" class="'+(scope===x[0]?'on':'')+'" data-act="exScope" data-s="'+x[0]+'">'+x[1]+'</button>';}).join('')+'</div>'+extra+'</div>'+
     exOptions()+
-    '<div class="row"><button type="button" class="btn pri" data-act="doExport" data-scope="'+scope+'" data-sid="'+(U.exStudent||'')+'">تنزيل ملف CSV</button><button type="button" class="btn" data-act="copyExport" data-scope="'+scope+'" data-sid="'+(U.exStudent||'')+'">نسخ البيانات</button></div></section>'+
-    '<section class="card"><div class="cardhead"><h2>معاينة</h2><span class="muted">'+esc(ex.name)+'.csv</span></div>'+previewTable(ex)+'</section>';
+    '<div class="row"><button type="button" class="btn pri" data-act="doExport" '+args+'>تنزيل ملف Excel</button><button type="button" class="btn" data-act="copyExport" '+args+'>نسخ كجدول</button></div></section>'+
+    '<section class="card"><div class="cardhead"><h2>معاينة</h2><span class="muted">'+esc(wb.name)+'</span></div>'+previewHtml(wb.sheets[0])+'</section>';
 }
 
 /* settings */
@@ -431,93 +447,250 @@ function studentModal(c,s,seat){
     '<div class="row"><button class="btn pri">حفظ</button><button type="button" class="btn ghost" data-act="mcancel">إلغاء</button></div></form>');
 }
 
-/* ---------- export ---------- */
-function buildExport(c,scope,sid,type,withAtt){
-  var cats=S.settings.cats;
+/* ---------- export (Excel) ---------- */
+function exStudents(c,scope,sid){
   var all=sortedStudents(c);
-  var one=scope==='student'?all.find(function(s){return s.id===sid;}):null;
-  var list=one?[one]:all;
+  if(scope==='student')return all.filter(function(s){return s.id===sid;});
+  if(scope==='pick'){var set={};(U.exPick||[]).forEach(function(i){set[i]=1;});return all.filter(function(s){return set[s.id];});}
+  return all;
+}
+function buildWorkbook(c,scope,sid,type,withAtt){
+  var cats=S.settings.cats,list=exStudents(c,scope,sid);
+  var lbl=scope==='student'&&list[0]?list[0].name:scope==='pick'?'طلاب محددون':'كل الفصل';
+  var typeLbl=type==='all'?'كل الدرجات المدخلة':'متوسط الدرجات حسب التصنيف';
+  var title=c.name+(c.subject?' - '+c.subject:'')+'  |  '+typeLbl+'  |  '+lbl+'  |  '+today();
   var safe=function(x){return String(x).replace(/[\\\/:*?"<>|]+/g,'').trim().replace(/\s+/g,'-');};
-  var name=safe(c.name)+'-'+(type==='all'?'كل-الدرجات':'متوسط-الدرجات')+'-'+(one?safe(one.name):'كل-الطلاب');
-  var head=[],rows=[];
+  var name=safe(c.name)+'-'+(type==='all'?'كل-الدرجات':'متوسط-الدرجات')+'-'+safe(lbl)+'.xlsx';
+  var known={};cats.forEach(function(k){known[k.id]=1;});
+  var byDate=function(a,b){return String(a.date).localeCompare(String(b.date));};
+  var head1=[{t:'اسم الطالب',rs:2},{t:'رقم الطالب',rs:2}],head2=[null,null],cols=[],note='';
   if(type==='all'){
-    head=['الفصل','المادة','الطالب','رقم الطالب','نوع الدرجة','رقم الدرجة','درجة الطالب','الدرجة النهائية','النسبة %','التاريخ','ملاحظة'];
-    var order=function(id){var i=cats.findIndex(function(k){return k.id===id;});return i<0?999:i;};
-    list.forEach(function(s){
-      var gs=s.grades.slice().sort(function(a,b){return order(a.cat)-order(b.cat)||((a.slot==null?999:a.slot)-(b.slot==null?999:b.slot))||String(a.date).localeCompare(String(b.date));});
-      if(!gs.length)rows.push([c.name,c.subject,s.name,s.num,'','','','','','','']);
-      gs.forEach(function(g){var k=catById(g.cat);rows.push([c.name,c.subject,s.name,s.num,k?k.name:'(نوع محذوف)',g.slot!=null?g.slot+1:'',g.score,g.max,r1(g.score/g.max*100),g.date,g.note]);});
+    cats.forEach(function(k){
+      var ns=k.count;
+      list.forEach(function(s){s.grades.forEach(function(g){if(g.cat===k.id&&g.slot!=null)ns=Math.max(ns,g.slot+1);});});
+      head1.push({t:k.name+' (من '+fmt(k.max)+')',cs:ns});
+      for(var i=0;i<ns;i++){head2.push(i+1);(function(i){cols.push(function(s){var g=s.grades.find(function(x){return x.cat===k.id&&x.slot===i;});return g?g.score:'';});})(i);}
+      var nm=0;
+      list.forEach(function(s){nm=Math.max(nm,s.grades.filter(function(g){return g.cat===k.id&&g.slot==null;}).length);});
+      if(nm){
+        head1.push({t:k.name+' - يدوي',cs:nm});
+        for(var j=0;j<nm;j++){head2.push(j+1);(function(j){cols.push(function(s){var a=s.grades.filter(function(g){return g.cat===k.id&&g.slot==null;}).sort(byDate);return a[j]?a[j].score:'';});})(j);}
+        note='الدرجات اليدوية: الدرجة النهائية لكل درجة مكتوبة في ورقة «السجل التفصيلي».';
+      }
     });
-  }else if(one){
-    head=['التصنيف','عدد الدرجات','مجموع الدرجات','مجموع الدرجات النهائية','متوسط الدرجة','النسبة %'];
-    var line=function(label,st){return [label,st.n,st.n?r2(st.sum):'',st.n?r2(st.max):'',st.n?r2(st.avg):'',st.n?r1(st.pct):''];};
-    cats.forEach(function(k){rows.push(line(k.name,statsFor(one,k.id)));});
-    rows.push(line('الإجمالي',statsFor(one)));
-    if(withAtt){var a=attOf(c,one.id);
-      rows.push(['','','','','','']);
-      rows.push(['أيام الحضور',a.p,'','','','']);rows.push(['أيام الغياب',a.a,'','','','']);rows.push(['أيام التأخر',a.l,'','','','']);rows.push(['بعذر',a.e,'','','','']);
-      rows.push(['نسبة الحضور %',a.rate==null?'':r1(a.rate),'','','','']);}
-  }else{
-    head=['الفصل','الطالب','رقم الطالب'];
-    cats.forEach(function(k){head.push(k.name+' (متوسط)',k.name+' %');});
-    head.push('مجموع الدرجات','مجموع النهايات','النسبة الإجمالية %');
-    if(withAtt)head.push('أيام الحضور','أيام الغياب','أيام التأخر','بعذر','نسبة الحضور %');
-    list.forEach(function(s){
-      var r=[c.name,s.name,s.num];
-      cats.forEach(function(k){var st=statsFor(s,k.id);r.push(st.n?r2(st.avg):'',st.n?r1(st.pct):'');});
-      var t=statsFor(s);r.push(t.n?r2(t.sum):'',t.n?r2(t.max):'',t.n?r1(t.pct):'');
-      if(withAtt){var a=attOf(c,s.id);r.push(a.p,a.a,a.l,a.e,a.rate==null?'':r1(a.rate));}
-      rows.push(r);
-    });
-    if(rows.length){
-      var avg=[c.name,'متوسط الفصل',''];
-      for(var i=3;i<head.length;i++){var nums=rows.map(function(r){return r[i];}).filter(function(v){return typeof v==='number';});avg.push(nums.length?r2(nums.reduce(function(a,b){return a+b;},0)/nums.length):'');}
-      rows.push(avg);
+    var no=0;
+    list.forEach(function(s){no=Math.max(no,s.grades.filter(function(g){return !known[g.cat];}).length);});
+    if(no){
+      head1.push({t:'نوع محذوف',cs:no});
+      for(var q=0;q<no;q++){head2.push(q+1);(function(q){cols.push(function(s){var a=s.grades.filter(function(g){return !known[g.cat];}).sort(byDate);return a[q]?a[q].score:'';});})(q);}
     }
+  }else{
+    cats.forEach(function(k){
+      head1.push({t:k.name+' (من '+fmt(k.max)+')',cs:2});head2.push('المتوسط','النسبة %');
+      cols.push(function(s){var st=statsFor(s,k.id);return st.n?r2(st.avg):'';});
+      cols.push(function(s){var st=statsFor(s,k.id);return st.n?r1(st.pct):'';});
+    });
   }
-  return {head:head,rows:rows,name:name};
+  head1.push({t:'الإجمالي',cs:3});head2.push('المجموع','من','النسبة %');
+  cols.push(function(s){var t=statsFor(s);return t.n?r2(t.sum):'';});
+  cols.push(function(s){var t=statsFor(s);return t.n?r2(t.max):'';});
+  cols.push(function(s){var t=statsFor(s);return t.n?r1(t.pct):'';});
+  if(withAtt){
+    head1.push({t:'الحضور والغياب',cs:5});head2.push('حضور','غياب','تأخر','بعذر','نسبة الحضور %');
+    ['p','a','l','e'].forEach(function(k){cols.push(function(s){return attOf(c,s.id)[k];});});
+    cols.push(function(s){var a=attOf(c,s.id);return a.rate==null?'':r1(a.rate);});
+  }
+  var rows=list.map(function(s){return [s.name,s.num].concat(cols.map(function(f){return f(s);}));});
+  var sum=[];
+  if(rows.length>1){
+    var avg=['متوسط المجموعة',''];
+    for(var i2=2;i2<head2.length;i2++){
+      var nums=rows.map(function(r){return r[i2];}).filter(function(v){return typeof v==='number';});
+      avg.push(nums.length?r2(nums.reduce(function(a,b){return a+b;},0)/nums.length):'');
+    }
+    sum.push(rows.length);rows.push(avg);
+  }
+  var main={name:type==='all'?'كل الدرجات':'المتوسطات',title:title,head1:head1,head2:head2,rows:rows,sum:sum,note:note,freezeCols:1};
+  var sheets=[main];
+  if(type==='all'){
+    var order=function(id){var i=cats.findIndex(function(k){return k.id===id;});return i<0?999:i;};
+    var drows=[];
+    list.forEach(function(s){
+      var gs=s.grades.slice().sort(function(a,b){return order(a.cat)-order(b.cat)||((a.slot==null?999:a.slot)-(b.slot==null?999:b.slot))||byDate(a,b);});
+      gs.forEach(function(g){var k=catById(g.cat);drows.push([s.name,s.num,k?k.name:'(نوع محذوف)',g.slot!=null?g.slot+1:'يدوي',g.score,g.max,r1(g.score/g.max*100),g.date,g.note]);});
+    });
+    sheets.push({name:'السجل التفصيلي',title:title,head1:['اسم الطالب','رقم الطالب','نوع الدرجة','رقم الدرجة','درجة الطالب','الدرجة النهائية','النسبة %','التاريخ','ملاحظة'].map(function(t){return {t:t};}),head2:null,rows:drows,sum:[],note:'',freezeCols:1});
+  }
+  return {sheets:sheets,name:name,count:list.length};
 }
-function toCsv(head,rows){
-  var cell=function(v){
-    if(v==null)return '';
-    var s=String(v);
-    if(typeof v==='string'&&/^[=+\-@\t\r]/.test(s))s="'"+s;
-    return /[",\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
-  };
-  return [head].concat(rows).map(function(r){return r.map(cell).join(',');}).join('\r\n');
+function flatHead(sh){
+  var out=[],col=0;
+  sh.head1.forEach(function(h){var cs=h.cs||1;for(var j=0;j<cs;j++){var sub=sh.head2?sh.head2[col+j]:null;out.push(sub==null?h.t:h.t+' '+sub);}col+=cs;});
+  return out;
 }
+function toTsv(sh){
+  var clean=function(v){return String(v==null?'':v).replace(/[\t\r\n]+/g,' ');};
+  return [flatHead(sh)].concat(sh.rows).map(function(r){return r.map(clean).join('\t');}).join('\n');
+}
+
+/* minimal .xlsx writer: zip (stored) + SpreadsheetML, no libraries */
+var CRC_T=null;
+function crc32(b){
+  if(!CRC_T){CRC_T=new Uint32Array(256);for(var n=0;n<256;n++){var c=n;for(var k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;CRC_T[n]=c>>>0;}}
+  var x=0xFFFFFFFF;for(var i=0;i<b.length;i++)x=CRC_T[(x^b[i])&255]^(x>>>8);
+  return (x^0xFFFFFFFF)>>>0;
+}
+function zipStore(files){
+  var enc=new TextEncoder(),chunks=[],central=[],offset=0,d=new Date();
+  var time=(d.getHours()<<11)|(d.getMinutes()<<5)|(d.getSeconds()>>1),date=((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate();
+  files.forEach(function(f){
+    var nm=enc.encode(f.name),crc=crc32(f.data),sz=f.data.length;
+    var lh=new DataView(new ArrayBuffer(30));
+    lh.setUint32(0,0x04034b50,true);lh.setUint16(4,20,true);lh.setUint16(6,0x0800,true);lh.setUint16(8,0,true);lh.setUint16(10,time,true);lh.setUint16(12,date,true);
+    lh.setUint32(14,crc,true);lh.setUint32(18,sz,true);lh.setUint32(22,sz,true);lh.setUint16(26,nm.length,true);lh.setUint16(28,0,true);
+    chunks.push(new Uint8Array(lh.buffer),nm,f.data);
+    var ch=new DataView(new ArrayBuffer(46));
+    ch.setUint32(0,0x02014b50,true);ch.setUint16(4,20,true);ch.setUint16(6,20,true);ch.setUint16(8,0x0800,true);ch.setUint16(10,0,true);ch.setUint16(12,time,true);ch.setUint16(14,date,true);
+    ch.setUint32(16,crc,true);ch.setUint32(20,sz,true);ch.setUint32(24,sz,true);ch.setUint16(28,nm.length,true);ch.setUint16(30,0,true);ch.setUint16(32,0,true);ch.setUint16(34,0,true);ch.setUint16(36,0,true);ch.setUint32(38,0,true);ch.setUint32(42,offset,true);
+    central.push(new Uint8Array(ch.buffer),nm);
+    offset+=30+nm.length+sz;
+  });
+  var csize=0;central.forEach(function(x){csize+=x.length;});
+  var end=new DataView(new ArrayBuffer(22));
+  end.setUint32(0,0x06054b50,true);end.setUint16(4,0,true);end.setUint16(6,0,true);end.setUint16(8,files.length,true);end.setUint16(10,files.length,true);end.setUint32(12,csize,true);end.setUint32(16,offset,true);end.setUint16(20,0,true);
+  var all=chunks.concat(central,[new Uint8Array(end.buffer)]),total=0;
+  all.forEach(function(x){total+=x.length;});
+  var out=new Uint8Array(total),p=0;
+  all.forEach(function(x){out.set(x,p);p+=x.length;});
+  return out;
+}
+function colName(i){var s='';i++;while(i>0){var m=(i-1)%26;s=String.fromCharCode(65+m)+s;i=Math.floor((i-1)/26);}return s;}
+function xe(s){return String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function cellXml(r,c,v,s){
+  var ref=colName(c)+r;
+  if(v===''||v==null)return '<c r="'+ref+'" s="'+s+'"/>';
+  if(typeof v==='number'&&isFinite(v))return '<c r="'+ref+'" s="'+s+'"><v>'+v+'</v></c>';
+  return '<c r="'+ref+'" s="'+s+'" t="inlineStr"><is><t xml:space="preserve">'+xe(v)+'</t></is></c>';
+}
+function sheetXml(sh){
+  var nc=sh.head1.reduce(function(a,h){return a+(h.cs||1);},0),rows=[],merges=[],r=1;
+  if(sh.title){rows.push('<row r="1" ht="28" customHeight="1">'+cellXml(1,0,sh.title,1)+'</row>');merges.push('A1:'+colName(nc-1)+'1');r=2;}
+  var hr1=r,hr2=sh.head2?r+1:0,cells='',col=0;
+  sh.head1.forEach(function(h){
+    var cs=h.cs||1,rs=h.rs||1;
+    for(var j=0;j<cs;j++)cells+=cellXml(hr1,col+j,j===0?h.t:'',2);
+    if(cs>1||rs>1)merges.push(colName(col)+hr1+':'+colName(col+cs-1)+(hr1+rs-1));
+    col+=cs;
+  });
+  rows.push('<row r="'+hr1+'" ht="24" customHeight="1">'+cells+'</row>');
+  if(sh.head2){
+    cells='';
+    sh.head2.forEach(function(t,j){cells+=cellXml(hr2,j,t==null?'':t,2);});
+    rows.push('<row r="'+hr2+'" ht="22" customHeight="1">'+cells+'</row>');
+  }
+  var first=(hr2||hr1)+1,widths=[];
+  for(var j2=0;j2<nc;j2++)widths.push(j2===0?24:j2===1?12:8);
+  var grow=function(j,v){if(j<nc){var l=String(v==null?'':v).length*1.25+3;if(l>widths[j])widths[j]=Math.min(l,42);}};
+  sh.head1.forEach(function(h,i){});
+  var hc=0;sh.head1.forEach(function(h){if((h.cs||1)===1)grow(hc,h.t);hc+=(h.cs||1);});
+  if(sh.head2)sh.head2.forEach(function(t,j){if(t!=null)grow(j,t);});
+  sh.rows.forEach(function(row,i){
+    var isSum=sh.sum&&sh.sum.indexOf(i)>=0,rr=first+i,cs='';
+    row.forEach(function(v,j){
+      grow(j,v);
+      var text=typeof v==='string'&&v!=='';
+      cs+=cellXml(rr,j,v,j===0||text?(isSum?5:3):(isSum?6:4));
+    });
+    rows.push('<row r="'+rr+'">'+cs+'</row>');
+  });
+  var last=first+sh.rows.length-1;
+  if(sh.note){last+=2;rows.push('<row r="'+last+'">'+cellXml(last,0,sh.note,0)+'</row>');}
+  var fc=sh.freezeCols||0,yS=first-1,pane;
+  if(fc)pane='<pane xSplit="'+fc+'" ySplit="'+yS+'" topLeftCell="'+colName(fc)+first+'" activePane="bottomRight" state="frozen"/><selection pane="topRight" activeCell="'+colName(fc)+'1" sqref="'+colName(fc)+'1"/><selection pane="bottomLeft" activeCell="A'+first+'" sqref="A'+first+'"/><selection pane="bottomRight" activeCell="'+colName(fc)+first+'" sqref="'+colName(fc)+first+'"/>';
+  else pane='<pane ySplit="'+yS+'" topLeftCell="A'+first+'" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A'+first+'" sqref="A'+first+'"/>';
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>'+
+    '<dimension ref="A1:'+colName(nc-1)+Math.max(last,hr2||hr1)+'"/>'+
+    '<sheetViews><sheetView rightToLeft="1" workbookViewId="0">'+pane+'</sheetView></sheetViews>'+
+    '<sheetFormatPr defaultRowHeight="18"/>'+
+    '<cols>'+widths.map(function(w,i){return '<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+Math.round(w*10)/10+'" customWidth="1"/>';}).join('')+'</cols>'+
+    '<sheetData>'+rows.join('')+'</sheetData>'+
+    (merges.length?'<mergeCells count="'+merges.length+'">'+merges.map(function(m){return '<mergeCell ref="'+m+'"/>';}).join('')+'</mergeCells>':'')+
+    '<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/><pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>';
+}
+function stylesXml(){
+  var b='<border><left style="thin"><color rgb="FFBFD0CE"/></left><right style="thin"><color rgb="FFBFD0CE"/></right><top style="thin"><color rgb="FFBFD0CE"/></top><bottom style="thin"><color rgb="FFBFD0CE"/></bottom><diagonal/></border>';
+  var f=function(extra){return '<font>'+extra+'<name val="Arial"/><family val="2"/></font>';};
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'+
+    '<fonts count="4">'+f('<sz val="11"/>')+f('<b/><sz val="14"/><color rgb="FF0E6B62"/>')+f('<b/><sz val="11"/><color rgb="FFFFFFFF"/>')+f('<b/><sz val="11"/>')+'</fonts>'+
+    '<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'+
+    '<fill><patternFill patternType="solid"><fgColor rgb="FF0E6B62"/><bgColor indexed="64"/></patternFill></fill>'+
+    '<fill><patternFill patternType="solid"><fgColor rgb="FFE3F0EE"/><bgColor indexed="64"/></patternFill></fill></fills>'+
+    '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>'+b+'</borders>'+
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'+
+    '<cellXfs count="7">'+
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'+
+    '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'+
+    '<xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'+
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" readingOrder="2"/></xf>'+
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'+
+    '<xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" readingOrder="2"/></xf>'+
+    '<xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'+
+    '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+}
+function xlsxBytes(sheets){
+  var enc=new TextEncoder(),used={};
+  var names=sheets.map(function(sh,i){var n=String(sh.name).replace(/[\[\]:*?\/\\]/g,'').slice(0,31)||('ورقة'+(i+1));while(used[n])n=n.slice(0,28)+i;used[n]=1;return n;});
+  var files=[
+    {name:'[Content_Types].xml',text:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'+sheets.map(function(s,i){return '<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';}).join('')+'<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'},
+    {name:'_rels/.rels',text:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'},
+    {name:'xl/workbook.xml',text:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>'+names.map(function(n,i){return '<sheet name="'+xe(n).replace(/"/g,'&quot;')+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>';}).join('')+'</sheets></workbook>'},
+    {name:'xl/_rels/workbook.xml.rels',text:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+sheets.map(function(s,i){return '<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>';}).join('')+'<Relationship Id="rId'+(sheets.length+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'},
+    {name:'xl/styles.xml',text:stylesXml()}
+  ];
+  sheets.forEach(function(sh,i){files.push({name:'xl/worksheets/sheet'+(i+1)+'.xml',text:sheetXml(sh)});});
+  return zipStore(files.map(function(f){return {name:f.name,data:enc.encode(f.text)};}));
+}
+
+/* saving and copying */
 function showText(name,text){
-  modal('<h2>انسخ البيانات</h2><p class="muted" style="margin:6px 0 10px">تعذر التنزيل المباشر هنا. انسخ النص والصقه في ملف باسم '+esc(name)+' أو في Excel.</p><textarea id="csvOut" readonly>'+esc(text)+'</textarea><div class="row"><button type="button" class="btn pri" data-act="copyText">نسخ</button><button type="button" class="btn ghost" data-act="mcancel">إغلاق</button></div>');
+  modal('<h2>انسخ البيانات</h2><p class="muted" style="margin:6px 0 10px">تعذر التنزيل المباشر هنا. انسخ النص والصقه في ملف باسم '+esc(name)+'.</p><textarea id="csvOut" readonly>'+esc(text)+'</textarea><div class="row"><button type="button" class="btn pri" data-act="copyText">نسخ</button><button type="button" class="btn ghost" data-act="mcancel">إغلاق</button></div>');
   var t=$('#csvOut');if(t)t.select();
 }
 async function copyTextOf(text,ta){
-  try{await navigator.clipboard.writeText(text);toast('تم النسخ');}
+  try{await navigator.clipboard.writeText(text);toast('تم النسخ. الصقه في Excel');}
   catch(e){if(ta){ta.focus();ta.select();}toast('حدّد النص وانسخه يدوياً');}
 }
 var STANDALONE=!(window.claude&&window.claude.use);
-function blobDownload(name,text,bom){
-  var type=/\.json$/.test(name)?'application/json':'text/csv';
-  var blob=new Blob([(bom===false?'':'﻿')+text],{type:type+';charset=utf-8'});
+var XLSX_MIME='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+function blobDownload(name,data,bom){
+  var bin=typeof data!=='string';
+  var type=bin?XLSX_MIME:/\.json$/.test(name)?'application/json;charset=utf-8':'text/plain;charset=utf-8';
+  var blob=new Blob([bin?data:(bom===false?'':'﻿')+data],{type:type});
   var url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download=name;document.body.appendChild(a);a.click();
   setTimeout(function(){URL.revokeObjectURL(url);if(a.remove)a.remove();},1500);
 }
-async function saveFile(name,text,bom){
+async function saveFile(name,data,bom){
+  var bin=typeof data!=='string';
   if(STANDALONE){
-    try{blobDownload(name,text,bom);toast('تم تنزيل الملف');return;}catch(e){showText(name,text);return;}
+    try{blobDownload(name,data,bom);toast('تم تنزيل الملف');}
+    catch(e){if(bin)toast('تعذر تنزيل الملف في هذا المتصفح');else showText(name,data);}
+    return;
   }
   var dl=null;
-  try{if(window.claude&&window.claude.use)dl=await window.claude.use('downloads');}catch(e){dl=null;}
+  try{dl=await window.claude.use('downloads');}catch(e){dl=null;}
   if(dl){
-    try{await dl.save({filename:name,data:(bom===false?'':'﻿')+text});toast('تم تجهيز الملف');return;}
+    try{await dl.save({filename:name,data:bin?data:(bom===false?'':'﻿')+data});toast('تم تجهيز الملف');return;}
     catch(e){if(e&&e.code==='declined')return;}
   }
-  showText(name,text);
+  if(bin)toast('تعذر تنزيل الملف هنا. افتح البرنامج بعد نشره على موقعك للتنزيل المباشر.');else showText(name,data);
 }
 function exportFromBtn(t){
   var c=curClass();if(!c)return null;
-  var scope=t.getAttribute('data-scope'),sid=t.getAttribute('data-sid')||null;
-  return buildExport(c,scope,sid,U.exType,U.exAtt);
+  var wb=buildWorkbook(c,t.getAttribute('data-scope'),t.getAttribute('data-sid')||null,U.exType,U.exAtt);
+  if(!wb.count){toast('لا يوجد طلاب للتصدير. اختر طالباً واحداً على الأقل.');return null;}
+  return wb;
 }
 
 /* ---------- mutations ---------- */
@@ -628,8 +801,11 @@ async function act(a,t,e){
       }
       break;}
     case 'exScope':U.exScope=t.getAttribute('data-s');renderKeep();break;
-    case 'doExport':{var ex=exportFromBtn(t);if(ex)await saveFile(ex.name+'.csv',toCsv(ex.head,ex.rows));break;}
-    case 'copyExport':{var ex2=exportFromBtn(t);if(ex2)await copyTextOf(toCsv(ex2.head,ex2.rows));break;}
+    case 'doExport':{var wb=exportFromBtn(t);if(wb)await saveFile(wb.name,xlsxBytes(wb.sheets));break;}
+    case 'copyExport':{var wb2=exportFromBtn(t);if(wb2)await copyTextOf(toTsv(wb2.sheets[0]));break;}
+    case 'exPickAll':U.exPick=sortedStudents(c).map(function(x){return x.id;});renderKeep();break;
+    case 'exPickNone':U.exPick=[];renderKeep();break;
+    case 'exPickFromStudent':U.exScope='pick';U.exPick=[U.student];U.tab='export';U.student=null;U.pad=null;render(true);break;
     case 'copyText':{var ta=$('#csvOut');await copyTextOf(ta?ta.value:'',ta);break;}
     case 'backup':saveFile('نسخة-احتياطية-سجل-الفصل-'+today()+'.json',JSON.stringify({v:1,app:'sijil-alfasl',exported:new Date().toISOString(),settings:S.settings,classes:S.classes,att:S.att}),false);break;
     case 'restorePick':{var inp=$('#restoreIn');if(inp){inp.value='';inp.click();}break;}
@@ -647,6 +823,7 @@ function onChange(k,t){
     case 'filter':U.filter=t.value;applySeatFilter();break;
     case 'exOpt':U[t.getAttribute('data-k')]=t.type==='checkbox'?t.checked:t.value;renderKeep();break;
     case 'exStudent':U.exStudent=t.value;renderKeep();break;
+    case 'exPickOne':{var pid=t.getAttribute('data-id'),ix=U.exPick.indexOf(pid);if(t.checked&&ix<0)U.exPick.push(pid);else if(!t.checked&&ix>=0)U.exPick.splice(ix,1);renderKeep();break;}
     case 'manualCat':{var kk=catById(t.value);U.mcat=t.value;U.mmax=null;if(kk&&t.form)t.form.elements.max.value=fmt(kk.max);break;}
     case 'catField':{
       var cat=catById(t.getAttribute('data-id')),f=t.getAttribute('data-f');if(!cat)break;
