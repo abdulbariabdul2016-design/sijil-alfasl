@@ -35,7 +35,7 @@ var U={tab:'home',cls:null,mapOpen:false,student:null,seg:'grades',gmode:'quick'
 function normalize(d){
   var o={settings:{cats:[]},classes:[],att:{}};
   var cats=d&&d.settings&&Array.isArray(d.settings.cats)&&d.settings.cats.length?d.settings.cats:DEFAULT_CATS;
-  o.settings.cats=cats.map(function(k){return {id:String(k.id||uid()),name:String(k.name||'نوع'),count:clampI(k.count,1,30,1),max:+k.max>0?+k.max:10};});
+  o.settings.cats=cats.map(function(k){var sym=k.kind==='sym';return {id:String(k.id||uid()),name:String(k.name||'نوع'),count:clampI(k.count,1,60,1),max:sym?1:(+k.max>0?+k.max:10),kind:sym?'sym':'num',weight:+k.weight>0?+k.weight:0,group:String(k.group||'')};});
   (d&&Array.isArray(d.classes)?d.classes:[]).forEach(function(c){
     o.classes.push({
       id:String(c.id||uid()).replace(/[^A-Za-z0-9]/g,'')||uid(),name:String(c.name||'فصل'),subject:String(c.subject||''),
@@ -59,12 +59,55 @@ var catById=function(id){return S.settings.cats.find(function(k){return k.id===i
 function cellCount(c){var used=c.students.reduce(function(m,s){return Math.max(m,s.seat);},-1)+1;var n=Math.max(c.cols*c.rows,used);return Math.ceil(n/c.cols)*c.cols;}
 function freeSeat(c){var taken={};c.students.forEach(function(s){taken[s.seat]=1;});var i=0;while(taken[i])i++;return i;}
 
-function statsFor(s,catId){
+function rawStats(s,catId){
   var rs=s.grades.filter(function(g){return !catId||g.cat===catId;});
   var sum=rs.reduce(function(a,g){return a+g.score;},0),mx=rs.reduce(function(a,g){return a+g.max;},0);
   return {n:rs.length,sum:sum,max:mx,avg:rs.length?sum/rs.length:null,pct:mx?sum/mx*100:null};
 }
-function classPct(c){var sum=0,mx=0;c.students.forEach(function(s){s.grades.forEach(function(g){sum+=g.score;mx+=g.max;});});return mx?sum/mx*100:null;}
+/* الدرجة المعتمدة = (مجموع درجات الطالب ÷ الممكن) × الوزن. الرموز تُقرَّب إلى نصف درجة. */
+function catFinal(s,k){
+  if(!k||!(k.weight>0))return null;
+  var st=rawStats(s,k.id);if(!st.n||!st.max)return null;
+  var v=st.sum/st.max*k.weight;
+  return k.kind==='sym'?Math.round(v*2)/2:r2(v);
+}
+function statsFor(s,catId){
+  if(catId)return rawStats(s,catId);
+  var known={},sum=0,mx=0,n=0;
+  S.settings.cats.forEach(function(k){
+    known[k.id]=1;var st=rawStats(s,k.id);if(!st.n)return;n+=st.n;
+    if(k.weight>0){sum+=catFinal(s,k);mx+=k.weight;}else{sum+=st.sum;mx+=st.max;}
+  });
+  s.grades.forEach(function(g){if(!known[g.cat]){sum+=g.score;mx+=g.max;n++;}});
+  return {n:n,sum:sum,max:mx,avg:n?sum/n:null,pct:mx?sum/mx*100:null};
+}
+function classPct(c){var sum=0,mx=0;c.students.forEach(function(s){var t=statsFor(s);sum+=t.sum;mx+=t.max;});return mx?sum/mx*100:null;}
+function groupsList(){
+  var m={},out=[];
+  S.settings.cats.forEach(function(k){
+    if(!(k.weight>0)||!k.group)return;
+    var g=m[k.group];if(!g){g=m[k.group]={name:k.group,cats:[],max:0};out.push(g);}
+    g.cats.push(k);g.max+=k.weight;
+  });
+  return out;
+}
+function groupTotal(s,g){var sum=0,any=false;g.cats.forEach(function(k){var f=catFinal(s,k);if(f!=null){sum+=f;any=true;}});return any?r2(sum):null;}
+function symOf(v){return v>=0.99?'+':v>0?'✓':'−';}
+function symCat(){return S.settings.cats.find(function(k){return k.kind==='sym';})||null;}
+function symGrade(s,k,date){return s.grades.find(function(g){return g.cat===k.id&&g.date===date&&g.slot==null;})||null;}
+function setSym(c,s,k,date,score){
+  var g=symGrade(s,k,date);
+  if(score==null){if(g)s.grades=s.grades.filter(function(x){return x!==g;});}
+  else if(g)g.score=score;
+  else s.grades.push({id:uid(),cat:k.id,slot:null,score:score,max:1,date:date,note:''});
+  markClass(c.id);
+}
+function cycleSym(c,sid){
+  var k=symCat();if(!k){toast('أضف قالب المشاركة اليومية من الإعدادات أولاً');return;}
+  var st=byId(c,sid),g=symGrade(st,k,U.attDate),order=[null,1,0.75,0],cur=g?g.score:null;
+  var i=order.findIndex(function(v){return v===cur;});
+  setSym(c,st,k,U.attDate,order[(i+1)%order.length]);renderKeep();
+}
 function attOf(c,sid){
   var p=0,a=0,l=0,e=0,m=S.att[c.id]||{};
   for(var d in m){var v=m[d][sid];if(v==='p')p++;else if(v==='a')a++;else if(v==='l')l++;else if(v==='e')e++;}
@@ -201,12 +244,13 @@ function vHome(){
   return '<div class="head"><h1>الفصول</h1><button type="button" class="btn pri" data-act="newClass">+ فصل جديد</button></div><p class="lead">اضغط على فصل لفتح خريطة الجلوس.</p><div class="cgrid">'+S.classes.map(classCard).join('')+'</div>';
 }
 function seatCard(c,s,date){
-  var st=statsFor(s),pct=st.pct,a=attOn(c,date,s.id);
+  var st=statsFor(s),pct=st.pct,a=attOn(c,date,s.id),im=U.mapMode==='int',sg=null;
+  if(im){var sk=symCat();sg=sk?symGrade(s,sk,date):null;a=sg?(sg.score>=0.99?'p':sg.score>0?'l':'a'):'';}
   var tone=pct==null?'none':pct>=85?'ok':pct>=60?'warn':'bad';
   return '<button type="button" class="seat st-'+(a||'n')+'" draggable="true" data-act="seat" data-sid="'+s.id+'" data-slot="'+s.seat+'">'+
     '<span class="ring t-'+tone+'" style="--p:'+(pct==null?0:Math.round(pct))+'"><b>'+(pct==null?'–':Math.round(pct))+'</b></span>'+
     '<span class="sname">'+esc(s.name)+'</span>'+
-    '<span class="sline"><span class="achip a-'+(a||'n')+'">'+(a?ATT[a].t:'غير مسجل')+'</span><span class="num">مقعد '+(s.seat+1)+'</span></span></button>';
+    '<span class="sline"><span class="achip a-'+(a||'n')+'">'+(im?(sg?symOf(sg.score)+' '+(sg.score>=0.99?'ممتازة':sg.score>0?'عادية':'لا مشاركة'):'غير مسجل'):(a?ATT[a].t:'غير مسجل'))+'</span><span class="num">مقعد '+(s.seat+1)+'</span></span></button>';
 }
 function vMap(){
   var c=curClass(),date=U.attDate,total=cellCount(c),bySeat={};
@@ -217,14 +261,14 @@ function vMap(){
   return '<div class="maphead"><div><button type="button" class="btn ghost sm" data-act="mapBack">→ الفصول</button>'+
     '<h1 style="margin-top:8px">خريطة الجلوس التفاعلية<span class="sub">'+esc(c.name)+(c.subject?' · '+esc(c.subject):'')+' · '+c.students.length+' طالب</span></h1></div>'+
     '<div class="mapctl"><label class="f inline">التاريخ<input type="date" value="'+date+'" data-ch="attDate"></label>'+
-    '<div class="seg"><button type="button" data-act="mode" data-m="open" class="'+(U.mapMode==='open'?'on':'')+'">فتح الطالب</button><button type="button" data-act="mode" data-m="att" class="'+(U.mapMode==='att'?'on':'')+'">تسجيل الحضور</button></div>'+
+    '<div class="seg"><button type="button" data-act="mode" data-m="open" class="'+(U.mapMode==='open'?'on':'')+'">فتح الطالب</button><button type="button" data-act="mode" data-m="att" class="'+(U.mapMode==='att'?'on':'')+'">تسجيل الحضور</button><button type="button" data-act="mode" data-m="int" class="'+(U.mapMode==='int'?'on':'')+'">تسجيل التفاعل</button></div>'+
     '<label class="f inline">عرض<select data-ch="filter">'+filters.map(function(f){return '<option value="'+f[0]+'"'+(U.filter===f[0]?' selected':'')+'>'+f[1]+'</option>';}).join('')+'</select></label>'+
     '<input type="search" id="seatQ" placeholder="بحث عن طالب" value="'+esc(U.q)+'" aria-label="بحث عن طالب"></div></div>'+
-    tally(c,date)+
+    (U.mapMode==='int'?'':tally(c,date))+
     roomShell(seats,mapCols(c.cols))+
     '<div class="legend"><span style="--c:var(--ok)">حاضر</span><span style="--c:var(--bad)">غائب</span><span style="--c:var(--chalk)">متأخر</span><span style="--c:var(--info)">بعذر</span>'+
     '<span>الحلقة = نسبة درجات الطالب</span>'+
-    '<span>'+(U.mapMode==='att'?'اضغط على المقعد لتغيير حالة الحضور (حاضر ← غائب ← متأخر ← بعذر ← مسح)':'اضغط على الطالب لإدخال درجاته · اسحب مقعداً لتبديل المكان')+'</span></div>';
+    '<span>'+(U.mapMode==='att'?'اضغط على المقعد لتغيير حالة الحضور (حاضر ← غائب ← متأخر ← بعذر ← مسح)':U.mapMode==='int'?'اضغط على المقعد لتسجيل تفاعل هذه الحصة: + ممتازة ← ✓ عادية ← − لا مشاركة ← مسح. سجّل 5 أو 6 طلاب في الحصة بالتناوب':'اضغط على الطالب لإدخال درجاته · اسحب مقعداً لتبديل المكان')+'</span></div>';
 }
 function applySeatFilter(){
   var c=curClass();if(!c)return;var q=normAr(U.q.trim()),f=U.filter;
@@ -260,20 +304,20 @@ function vStudents(){
 function pctCell(st,k){
   if(!st.n)return '<td class="num">—</td>';
   var t=st.pct>=85?'t-ok':st.pct>=60?'t-warn':'t-bad';
-  return '<td class="num"><b class="'+t+'">'+fmt1(st.pct)+'%</b>'+(k?'<small>'+st.n+' من '+k.count+'</small>':'')+'</td>';
+  return '<td class="num"><b class="'+t+'">'+fmt1(st.pct)+'%</b>'+(k&&k.kind!=='sym'?'<small>'+st.n+' من '+k.count+'</small>':'')+'</td>';
 }
 function vGrades(){
   var c=curClass();if(!c)return vNoClass();
   var cats=S.settings.cats,list=sortedStudents(c);
   var rows=list.map(function(s){
     return '<tr><td><button type="button" class="lnk" data-act="openStudent" data-id="'+s.id+'">'+esc(s.name)+'</button></td>'+
-      cats.map(function(k){return pctCell(statsFor(s,k.id),k);}).join('')+
+      cats.map(function(k){return pctCell(statsFor(s,k.id),k);}).join('')+groupsList().map(function(g){var t=groupTotal(s,g);return '<td class="num"><b>'+(t==null?'—':fmt(t))+'</b></td>';}).join('')+
       '<td class="num">'+(function(){var t=statsFor(s);return t.n?fmt(t.sum)+' / '+fmt(t.max):'—';})()+'</td>'+pctCell(statsFor(s),null)+'</tr>';
   }).join('');
-  var foot='<tr><td>متوسط الفصل</td>'+cats.map(function(k){var sum=0,mx=0,n=0;c.students.forEach(function(s){s.grades.forEach(function(g){if(g.cat===k.id){sum+=g.score;mx+=g.max;n++;}});});return n?'<td class="num">'+fmt1(sum/mx*100)+'%</td>':'<td class="num">—</td>';}).join('')+'<td></td><td class="num">'+(classPct(c)==null?'—':fmt1(classPct(c))+'%')+'</td></tr>';
+  var foot='<tr><td>متوسط الفصل</td>'+cats.map(function(k){var sum=0,mx=0,n=0;c.students.forEach(function(s){s.grades.forEach(function(g){if(g.cat===k.id){sum+=g.score;mx+=g.max;n++;}});});return n?'<td class="num">'+fmt1(sum/mx*100)+'%</td>':'<td class="num">—</td>';}).join('')+groupsList().map(function(g){var v=c.students.map(function(s){return groupTotal(s,g);}).filter(function(x){return x!=null;});return '<td class="num">'+(v.length?fmt(v.reduce(function(a,b){return a+b;},0)/v.length):'—')+'</td>';}).join('')+'<td></td><td class="num">'+(classPct(c)==null?'—':fmt1(classPct(c))+'%')+'</td></tr>';
   return '<div class="head"><h1>درجات الطلاب</h1>'+classPick()+'</div>'+
     '<section class="card"><div class="cardhead"><h2>سجل الدرجات</h2><span class="muted">اضغط اسم الطالب لإدخال درجاته</span></div>'+
-    (list.length?'<div class="tablewrap"><table class="gb"><thead><tr><th>الطالب</th>'+cats.map(function(k){return '<th>'+esc(k.name)+'<small>'+k.count+' × '+fmt(k.max)+'</small></th>';}).join('')+'<th>المجموع</th><th>النسبة</th></tr></thead><tbody>'+rows+'</tbody><tfoot>'+foot+'</tfoot></table></div>':'<p class="empty-note">سجّل الطلاب أولاً من تبويب الطلاب.</p>')+'</section>';
+    (list.length?'<div class="tablewrap"><table class="gb"><thead><tr><th>الطالب</th>'+cats.map(function(k){return '<th>'+esc(k.name)+'<small>'+(k.kind==='sym'?'رموز':k.count+' × '+fmt(k.max))+'</small></th>';}).join('')+groupsList().map(function(g){return '<th>'+esc(g.name)+'<small>من '+fmt(g.max)+'</small></th>';}).join('')+'<th>المجموع</th><th>النسبة</th></tr></thead><tbody>'+rows+'</tbody><tfoot>'+foot+'</tfoot></table></div>':'<p class="empty-note">سجّل الطلاب أولاً من تبويب الطلاب.</p>')+'</section>';
 }
 
 /* attendance tab */
@@ -322,17 +366,37 @@ function padHtml(k,s){
   return '<div class="pad"><div class="padtop"><span>الدرجة رقم '+(slot+1)+' من '+fmt(k.max)+'</span><span class="row" style="margin:0"><button type="button" class="btn ghost sm" data-act="padclear">مسح الدرجة</button><button type="button" class="btn ghost sm" data-act="padclose">إغلاق</button></span></div>'+
     '<div class="pns">'+btns+'</div><form class="padform" data-form="padcustom"><input name="v" type="number" step="any" min="0" max="'+k.max+'" placeholder="قيمة أخرى" aria-label="قيمة أخرى"><button class="btn sm">تسجيل</button></form></div>';
 }
+function symCard(c,s,k){
+  var st=statsFor(s,k.id),fin=catFinal(s,k),cur=symGrade(s,k,U.attDate),cv=cur?cur.score:null;
+  var hist=s.grades.filter(function(g){return g.cat===k.id;}).sort(function(a,b){return String(b.date).localeCompare(String(a.date));}).slice(0,30);
+  var btn=function(v,label,txt){return '<button type="button" class="pn'+(cv!=null&&Math.abs(cv-v)<0.01?' on':'')+'" data-act="sym" data-cat="'+k.id+'" data-v="'+v+'">'+txt+' '+label+'</button>';};
+  return '<article class="cat"><header><h3>'+esc(k.name)+'</h3><span class="muted">'+(st.n?st.n+' حصة مسجلة'+(fin!=null?' · المعتمدة '+fmt(fin)+' من '+fmt(k.weight):''):'لا توجد حصص مسجلة')+'</span></header>'+
+    '<label class="f inline" style="margin-bottom:8px">تاريخ الحصة<input type="date" value="'+U.attDate+'" data-ch="attDate"></label>'+
+    '<div class="pns">'+btn(1,'ممتازة','+')+btn(0.75,'عادية','✓')+btn(0,'لا مشاركة','−')+'<button type="button" class="pn" data-act="sym" data-cat="'+k.id+'" data-v="">مسح</button></div>'+
+    (hist.length?'<div class="slots" style="margin-top:10px">'+hist.map(function(g){return '<span class="slot has" style="cursor:default" title="'+esc(g.date)+'"><i>'+esc(String(g.date).slice(5))+'</i><b>'+symOf(g.score)+'</b></span>';}).join('')+'</div>':'')+'</article>';
+}
+function groupCards(s){
+  return groupsList().map(function(g){
+    var t=groupTotal(s,g);
+    var rows=g.cats.map(function(k){
+      var st=rawStats(s,k.id),f=catFinal(s,k),sym=k.kind==='sym';
+      return '<tr><td>'+esc(k.name)+'<small>'+(sym?'من الرموز: + = 1، ✓ = 0.75، − = 0، ويُقرَّب لنصف درجة':'(مجموع الدرجات ÷ الممكن) × '+fmt(k.weight))+'</small></td><td class="num">'+(st.n?(sym?st.n+' حصة':fmt(st.sum)+' / '+fmt(st.max)):'—')+'</td><td class="num">'+(st.n?fmt1(st.pct)+'%':'—')+'</td><td class="num"><b>'+(f==null?'—':fmt(f))+'</b> / '+fmt(k.weight)+'</td></tr>';
+    }).join('');
+    return '<section class="card"><div class="cardhead"><h2>'+esc(g.name)+'</h2><b class="num" style="font-size:20px">'+(t==null?'—':fmt(t))+' / '+fmt(g.max)+'</b></div><div class="tablewrap"><table><thead><tr><th>المكوّن</th><th>المدخل</th><th>النسبة</th><th>الدرجة المعتمدة</th></tr></thead><tbody>'+rows+'</tbody></table></div></section>';
+  }).join('');
+}
 function catCard(c,s,k){
+  if(k.kind==='sym')return symCard(c,s,k);
   var used=s.grades.filter(function(g){return g.cat===k.id&&g.slot!=null;});
   var maxSlot=used.reduce(function(m,g){return Math.max(m,g.slot);},-1),n=Math.max(k.count,maxSlot+1),by={};
   used.forEach(function(g){by[g.slot]=g;});
   var st=statsFor(s,k.id),slots='';
   for(var i=0;i<n;i++){var g=by[i],on=U.pad&&U.pad.cat===k.id&&U.pad.slot===i;
     slots+='<button type="button" class="slot'+(g?' has':'')+(on?' sel':'')+'" data-act="slot" data-cat="'+k.id+'" data-slot="'+i+'"><i>'+(i+1)+'</i><b>'+(g?fmt(g.score):'—')+'</b></button>';}
-  return '<article class="cat"><header><h3>'+esc(k.name)+'</h3><span class="muted">من '+fmt(k.max)+' · '+(st.n?'المتوسط '+fmt(st.avg)+' ('+fmt1(st.pct)+'%)':'لا توجد درجات')+'</span></header><div class="slots">'+slots+'</div>'+(U.pad&&U.pad.cat===k.id?padHtml(k,s):'')+'</article>';
+  return '<article class="cat"><header><h3>'+esc(k.name)+'</h3><span class="muted">من '+fmt(k.max)+' · '+(st.n?'المتوسط '+fmt(st.avg)+' ('+fmt1(st.pct)+'%)':'لا توجد درجات')+(k.weight>0&&st.n?' · المعتمدة '+fmt(catFinal(s,k))+' من '+fmt(k.weight):'')+'</span></header><div class="slots">'+slots+'</div>'+(U.pad&&U.pad.cat===k.id?padHtml(k,s):'')+'</article>';
 }
 function manualForm(c,s){
-  var cats=S.settings.cats,sel=catById(U.mcat)||cats[0];
+  var cats=S.settings.cats.filter(function(k){return k.kind!=='sym';}),sel=cats.find(function(k){return k.id===U.mcat;})||cats[0];
   if(!sel)return '<p class="empty-note">لا توجد أنواع درجات. أضفها أولاً من تبويب الإعدادات.</p>';
   return '<form class="fgrid" data-form="manual">'+
     '<label class="f">نوع الدرجة<select name="cat" data-ch="manualCat">'+cats.map(function(k){return '<option value="'+k.id+'"'+(k.id===sel.id?' selected':'')+'>'+esc(k.name)+'</option>';}).join('')+'</select></label>'+
@@ -348,8 +412,8 @@ function vStGrades(c,s){
   var body=U.gmode==='quick'?(cats.length?'<p class="muted" style="margin-bottom:12px">اضغط على خانة الدرجة ثم اضغط الرقم مباشرة لتسجيله في سجل الطالب.</p><div class="catgrid">'+cats.map(function(k){return catCard(c,s,k);}).join('')+'</div>':'<p class="empty-note">لا توجد أنواع درجات. أضفها من تبويب الإعدادات.</p>'):manualForm(c,s);
   var recs=s.grades.slice().sort(function(a,b){return String(b.date).localeCompare(String(a.date));});
   var log=recs.length?'<div class="tablewrap"><table><thead><tr><th>التاريخ</th><th>النوع</th><th>الدرجة</th><th>من</th><th>النسبة</th><th>ملاحظة</th><th></th></tr></thead><tbody>'+recs.map(function(g){var k=catById(g.cat);
-    return '<tr><td class="num">'+esc(g.date)+'</td><td>'+esc(k?k.name:'(نوع محذوف)')+(g.slot!=null?' #'+(g.slot+1):'')+'</td><td class="num"><b>'+fmt(g.score)+'</b></td><td class="num">'+fmt(g.max)+'</td><td class="num">'+fmt1(g.score/g.max*100)+'%</td><td>'+esc(g.note)+'</td><td><button type="button" class="btn ghost sm" data-act="delGrade" data-gid="'+g.id+'">حذف</button></td></tr>';}).join('')+'</tbody></table></div>':'<p class="empty-note">لم تسجَّل أي درجة لهذا الطالب بعد.</p>';
-  return '<section class="card"><div class="cardhead"><h2>إدخال الدرجات</h2>'+mode+'</div>'+body+'</section>'+
+    return '<tr><td class="num">'+esc(g.date)+'</td><td>'+esc(k?k.name:'(نوع محذوف)')+(g.slot!=null?' #'+(g.slot+1):'')+'</td>'+(k&&k.kind==='sym'?'<td class="num"><b>'+symOf(g.score)+'</b></td><td class="num">—</td><td class="num">—</td>':'<td class="num"><b>'+fmt(g.score)+'</b></td><td class="num">'+fmt(g.max)+'</td><td class="num">'+fmt1(g.score/g.max*100)+'%</td>')+'<td>'+esc(g.note)+'</td><td><button type="button" class="btn ghost sm" data-act="delGrade" data-gid="'+g.id+'">حذف</button></td></tr>';}).join('')+'</tbody></table></div>':'<p class="empty-note">لم تسجَّل أي درجة لهذا الطالب بعد.</p>';
+  return groupCards(s)+'<section class="card"><div class="cardhead"><h2>إدخال الدرجات</h2>'+mode+'</div>'+body+'</section>'+
     '<section class="card"><div class="cardhead"><h2>سجل الطالب</h2><span class="muted">'+recs.length+' درجة</span></div>'+log+'</section>';
 }
 function vStAtt(c,s){
@@ -413,9 +477,12 @@ function vExport(){
 /* settings */
 function vSettings(){
   var cats=S.settings.cats,c=curClass();
-  var rows=cats.map(function(k){return '<tr class="cfg"><td><input value="'+esc(k.name)+'" data-ch="catField" data-id="'+k.id+'" data-f="name" aria-label="اسم النوع"></td>'+
-    '<td><input type="number" min="1" max="30" value="'+k.count+'" data-ch="catField" data-id="'+k.id+'" data-f="count" aria-label="عدد الدرجات"></td>'+
-    '<td><input type="number" min="0.01" step="any" value="'+fmt(k.max)+'" data-ch="catField" data-id="'+k.id+'" data-f="max" aria-label="الدرجة الكاملة"></td>'+
+  var rows=cats.map(function(k){var sym=k.kind==='sym',id=' data-ch="catField" data-id="'+k.id+'"';return '<tr class="cfg"><td><input value="'+esc(k.name)+'"'+id+' data-f="name" aria-label="اسم النوع"></td>'+
+    '<td><select'+id+' data-f="kind" aria-label="طريقة الإدخال"><option value="num"'+(sym?'':' selected')+'>درجات</option><option value="sym"'+(sym?' selected':'')+'>رموز + ✓ −</option></select></td>'+
+    '<td>'+(sym?'<span class="muted">—</span>':'<input type="number" min="1" max="30" value="'+k.count+'"'+id+' data-f="count" aria-label="عدد الدرجات">')+'</td>'+
+    '<td>'+(sym?'<span class="muted">—</span>':'<input type="number" min="0.01" step="any" value="'+fmt(k.max)+'"'+id+' data-f="max" aria-label="الدرجة الكاملة">')+'</td>'+
+    '<td><input type="number" min="0" step="any" value="'+(k.weight?fmt(k.weight):'')+'" placeholder="بدون"'+id+' data-f="weight" aria-label="الدرجة المعتمدة"></td>'+
+    '<td><input value="'+esc(k.group||'')+'" placeholder="بدون"'+id+' data-f="group" aria-label="المجموعة"></td>'+
     '<td><button type="button" class="btn ghost sm" data-act="delCat" data-id="'+k.id+'">حذف</button></td></tr>';}).join('');
   var clsCard=c?'<section class="card"><div class="cardhead"><h2>إعدادات الفصل</h2>'+classPick()+'</div><div class="fgrid">'+
     '<label class="f">اسم الفصل<input value="'+esc(c.name)+'" data-ch="clsField" data-f="name"></label>'+
@@ -424,9 +491,9 @@ function vSettings(){
     '<label class="f">عدد الصفوف<input type="number" min="1" max="12" value="'+c.rows+'" data-ch="clsField" data-f="rows"></label></div>'+
     '<div class="row" style="margin-top:14px"><button type="button" class="btn" data-act="newClass">+ فصل جديد</button><button type="button" class="btn danger" data-act="delClass">حذف هذا الفصل</button></div></section>':'<section class="card"><h2>الفصول</h2><p class="muted" style="margin-top:6px">لا توجد فصول بعد.</p><div class="row"><button type="button" class="btn pri" data-act="newClass">+ فصل جديد</button></div></section>';
   return '<div class="head"><h1>الإعدادات</h1></div>'+
-    '<section class="card"><div class="cardhead"><h2>أنواع الدرجات</h2></div><p class="muted">حدّد نوع الدرجة وكم درجة تُسجَّل منه، والدرجة الكاملة لكل درجة. تظهر هذه الأنواع في الإدخال السريع والإدخال اليدوي وفي التصدير.</p>'+
-    '<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>نوع الدرجة</th><th>عدد الدرجات</th><th>الدرجة الكاملة لكل درجة</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
-    '<div class="row" style="margin-top:12px"><button type="button" class="btn pri" data-act="addCat">+ إضافة نوع درجة</button></div></section>'+
+    '<section class="card"><div class="cardhead"><h2>أنواع الدرجات</h2></div><p class="muted">حدّد نوع الدرجة وكم درجة تُسجَّل منه، والدرجة الكاملة لكل درجة. تظهر هذه الأنواع في الإدخال السريع والإدخال اليدوي وفي التصدير.</p><p class="muted" style="margin-top:6px"><b>الدرجة المعتمدة:</b> إن كتبتَ رقماً (مثل 6) تُحوَّل درجات النوع إلى هذا الرقم بالمعادلة (مجموع درجات الطالب ÷ الممكن) × الرقم، وغياب الطالب بعذر لا يُحسب صفراً لأن المتوسط يؤخذ من الدرجات المدخلة فقط. <b>المجموعة:</b> الأنواع التي تحمل اسم مجموعة واحداً تُجمع معاً (مثل المشاركة اليومية من 12). <b>رموز + ✓ −:</b> للتفاعل داخل الصف، وتُسجَّل من خريطة الجلوس (وضع تسجيل التفاعل).</p>'+
+    '<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>نوع الدرجة</th><th>طريقة الإدخال</th><th>عدد الدرجات</th><th>الدرجة الكاملة لكل درجة</th><th>الدرجة المعتمدة</th><th>المجموعة</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    '<div class="row" style="margin-top:12px"><button type="button" class="btn pri" data-act="addCat">+ إضافة نوع درجة</button><button type="button" class="btn" data-act="tplDaily">إضافة قالب المشاركة اليومية (12 درجة)</button></div></section>'+
     clsCard+
     '<section class="card"><h2>نسخة احتياطية</h2><p class="muted" style="margin-top:6px">نزّل نسخة من كل الفصول والطلاب والدرجات والحضور، أو استعدها من ملف سابق.</p>'+
     '<div class="row"><button type="button" class="btn" data-act="backup">تنزيل نسخة احتياطية</button><button type="button" class="btn" data-act="restorePick">استعادة من ملف</button><input type="file" id="restoreIn" accept=".json,application/json" hidden data-ch="restore"></div></section>';
@@ -462,10 +529,18 @@ function buildWorkbook(c,scope,sid,type,withAtt){
   var safe=function(x){return String(x).replace(/[\\\/:*?"<>|]+/g,'').trim().replace(/\s+/g,'-');};
   var name=safe(c.name)+'-'+(type==='all'?'كل-الدرجات':'متوسط-الدرجات')+'-'+safe(lbl)+'.xlsx';
   var known={};cats.forEach(function(k){known[k.id]=1;});
+  var addFinal=function(k){if(k.weight>0){head1.push({t:k.name+' - المعتمدة',cs:1});head2.push('من '+fmt(k.weight));cols.push(function(s){var f=catFinal(s,k);return f==null?'':f;});}};
+  var addGroups=function(){groupsList().forEach(function(g){head1.push({t:g.name,cs:1});head2.push('المجموع من '+fmt(g.max));cols.push(function(s){var t=groupTotal(s,g);return t==null?'':t;});});};
   var byDate=function(a,b){return String(a.date).localeCompare(String(b.date));};
   var head1=[{t:'اسم الطالب',rs:2},{t:'رقم الطالب',rs:2}],head2=[null,null],cols=[],note='';
   if(type==='all'){
     cats.forEach(function(k){
+      if(k.kind==='sym'){
+        var byD=function(s){return s.grades.filter(function(g){return g.cat===k.id;}).sort(byDate);},ns0=0;
+        list.forEach(function(s){ns0=Math.max(ns0,byD(s).length);});
+        if(ns0){head1.push({t:k.name+' (رموز بالتاريخ)',cs:ns0});for(var i0=0;i0<ns0;i0++){head2.push(i0+1);(function(i0){cols.push(function(s){var a=byD(s);return a[i0]?symOf(a[i0].score):'';});})(i0);}}
+        addFinal(k);return;
+      }
       var ns=k.count;
       list.forEach(function(s){s.grades.forEach(function(g){if(g.cat===k.id&&g.slot!=null)ns=Math.max(ns,g.slot+1);});});
       head1.push({t:k.name+' (من '+fmt(k.max)+')',cs:ns});
@@ -477,6 +552,7 @@ function buildWorkbook(c,scope,sid,type,withAtt){
         for(var j=0;j<nm;j++){head2.push(j+1);(function(j){cols.push(function(s){var a=s.grades.filter(function(g){return g.cat===k.id&&g.slot==null;}).sort(byDate);return a[j]?a[j].score:'';});})(j);}
         note='الدرجات اليدوية: الدرجة النهائية لكل درجة مكتوبة في ورقة «السجل التفصيلي».';
       }
+      addFinal(k);
     });
     var no=0;
     list.forEach(function(s){no=Math.max(no,s.grades.filter(function(g){return !known[g.cat];}).length);});
@@ -486,11 +562,14 @@ function buildWorkbook(c,scope,sid,type,withAtt){
     }
   }else{
     cats.forEach(function(k){
+      if(k.kind==='sym'){head1.push({t:k.name+' (عدد المرات)',cs:3});head2.push('+','✓','−');[1,0.75,0].forEach(function(v){cols.push(function(s){return s.grades.filter(function(g){return g.cat===k.id&&Math.abs(g.score-v)<0.01;}).length;});});addFinal(k);return;}
       head1.push({t:k.name+' (من '+fmt(k.max)+')',cs:2});head2.push('المتوسط','النسبة %');
       cols.push(function(s){var st=statsFor(s,k.id);return st.n?r2(st.avg):'';});
       cols.push(function(s){var st=statsFor(s,k.id);return st.n?r1(st.pct):'';});
+      addFinal(k);
     });
   }
+  addGroups();
   head1.push({t:'الإجمالي',cs:3});head2.push('المجموع','من','النسبة %');
   cols.push(function(s){var t=statsFor(s);return t.n?r2(t.sum):'';});
   cols.push(function(s){var t=statsFor(s);return t.n?r2(t.max):'';});
@@ -517,7 +596,7 @@ function buildWorkbook(c,scope,sid,type,withAtt){
     var drows=[];
     list.forEach(function(s){
       var gs=s.grades.slice().sort(function(a,b){return order(a.cat)-order(b.cat)||((a.slot==null?999:a.slot)-(b.slot==null?999:b.slot))||byDate(a,b);});
-      gs.forEach(function(g){var k=catById(g.cat);drows.push([s.name,s.num,k?k.name:'(نوع محذوف)',g.slot!=null?g.slot+1:'يدوي',g.score,g.max,r1(g.score/g.max*100),g.date,g.note]);});
+      gs.forEach(function(g){var k=catById(g.cat);drows.push(k&&k.kind==='sym'?[s.name,s.num,k.name,'رمز',symOf(g.score),'','',g.date,g.note]:[s.name,s.num,k?k.name:'(نوع محذوف)',g.slot!=null?g.slot+1:'يدوي',g.score,g.max,r1(g.score/g.max*100),g.date,g.note]);});
     });
     sheets.push({name:'السجل التفصيلي',title:title,head1:['اسم الطالب','رقم الطالب','نوع الدرجة','رقم الدرجة','درجة الطالب','الدرجة النهائية','النسبة %','التاريخ','ملاحظة'].map(function(t){return {t:t};}),head2:null,rows:drows,sum:[],note:'',freezeCols:1});
   }
@@ -707,6 +786,7 @@ function setSlot(c,s,k,slot,score){
   markClass(c.id);
 }
 function applyPad(score){
+  if(!U.pad)return;
   var c=curClass(),s=byId(c,U.student),k=catById(U.pad.cat);if(!s||!k)return;
   if(score!=null&&(!(score>=0)||score>k.max)){toast('الدرجة يجب أن تكون بين 0 و '+fmt(k.max));return;}
   setSlot(c,s,k,U.pad.slot,score);
@@ -756,6 +836,7 @@ async function act(a,t,e){
     case 'seat':{
       var sid=t.getAttribute('data-sid');
       if(U.mapMode==='att'){var order=['','p','a','l','e'],cur=attOn(c,U.attDate,sid);setAtt(c,U.attDate,sid,order[(order.indexOf(cur)+1)%order.length]);renderKeep();}
+      else if(U.mapMode==='int'){cycleSym(c,sid);}
       else{U.student=sid;U.seg='grades';U.pad=null;render(true);}
       break;}
     case 'addAt':studentModal(c,null,+t.getAttribute('data-seat'));break;
@@ -764,6 +845,12 @@ async function act(a,t,e){
     case 'stNav':U.student=t.getAttribute('data-id');U.pad=null;render(true);break;
     case 'seg':U.seg=t.getAttribute('data-s');U.pad=null;renderKeep();break;
     case 'gmode':U.gmode=t.getAttribute('data-m');U.pad=null;renderKeep();break;
+    case 'sym':{var sst=byId(c,U.student),sk2=catById(t.getAttribute('data-cat')),sv=t.getAttribute('data-v');if(sst&&sk2){setSym(c,sst,sk2,U.attDate,sv===''?null:parseFloat(sv));renderKeep();}break;}
+    case 'tplDaily':{
+      var G='المشاركة اليومية';
+      if(S.settings.cats.some(function(k){return k.group===G;})){toast('قالب المشاركة اليومية موجود بالفعل');break;}
+      S.settings.cats.push({id:uid(),name:'اختبار الخميس',count:8,max:10,kind:'num',weight:6,group:G},{id:uid(),name:'التفاعل داخل الصف',count:1,max:1,kind:'sym',weight:4,group:G},{id:uid(),name:'الانضباط والاستعداد',count:2,max:1,kind:'num',weight:2,group:G});
+      markSettings();renderKeep();toast('أُضيف قالب المشاركة اليومية (12 درجة)');break;}
     case 'slot':{var cat=t.getAttribute('data-cat'),sl=+t.getAttribute('data-slot');U.pad=(U.pad&&U.pad.cat===cat&&U.pad.slot===sl)?null:{cat:cat,slot:sl};renderKeep();break;}
     case 'padv':applyPad(parseFloat(t.getAttribute('data-v')));break;
     case 'padclear':applyPad(null);break;
@@ -829,8 +916,11 @@ function onChange(k,t){
       var cat=catById(t.getAttribute('data-id')),f=t.getAttribute('data-f');if(!cat)break;
       if(f==='name'){var v=t.value.trim();if(!v){t.value=cat.name;break;}cat.name=v;}
       else if(f==='count'){cat.count=clampI(t.value,1,30,cat.count);t.value=cat.count;}
-      else if(f==='max'){var m=parseFloat(t.value);if(!(m>0)){t.value=fmt(cat.max);break;}cat.max=m;}
-      markSettings();break;}
+      else if(f==='max'){var m=parseFloat(t.value);if(!(m>0)){t.value=fmt(cat.max);break;}cat.max=cat.kind==='sym'?1:m;}
+      else if(f==='weight'){var w=parseFloat(t.value);cat.weight=w>0?w:0;t.value=cat.weight?fmt(cat.weight):'';}
+      else if(f==='group'){cat.group=t.value.trim();}
+      else if(f==='kind'){cat.kind=t.value==='sym'?'sym':'num';if(cat.kind==='sym')cat.max=1;else if(!(cat.max>1))cat.max=10;}
+      markSettings();if(f==='kind')renderKeep();break;}
     case 'clsField':{
       if(!c)break;var cf=t.getAttribute('data-f');
       if(cf==='name'){var nv=t.value.trim();if(!nv){t.value=c.name;break;}c.name=nv;}
