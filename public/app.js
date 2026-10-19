@@ -30,7 +30,7 @@ var DEFAULT_CATS=[
 /* ---------- state ---------- */
 var S={settings:{cats:clone(DEFAULT_CATS)},classes:[],att:{}};
 var U={tab:'home',cls:null,mapOpen:false,student:null,seg:'grades',gmode:'quick',pad:null,mapMode:'open',filter:'all',q:'',
-  attDate:today(),exScope:'class',exStudent:null,exPick:[],exType:'all',exAtt:false,mcat:null,mmax:null,focus:null,_ask:null};
+  attDate:today(),exScope:'class',exStudent:null,exPick:[],exSheet:0,exType:'both',exAtt:false,mcat:null,mmax:null,focus:null,_ask:null};
 
 function normalize(d){
   var o={settings:{cats:[]},classes:[],att:{}};
@@ -59,26 +59,27 @@ var catById=function(id){return S.settings.cats.find(function(k){return k.id===i
 function cellCount(c){var used=c.students.reduce(function(m,s){return Math.max(m,s.seat);},-1)+1;var n=Math.max(c.cols*c.rows,used);return Math.ceil(n/c.cols)*c.cols;}
 function freeSeat(c){var taken={};c.students.forEach(function(s){taken[s.seat]=1;});var i=0;while(taken[i])i++;return i;}
 
-function rawStats(s,catId){
-  var rs=s.grades.filter(function(g){return !catId||g.cat===catId;});
+function monthKey(d){return String(d||'').slice(0,7);}
+function rawStats(s,catId,month){
+  var rs=s.grades.filter(function(g){return (!catId||g.cat===catId)&&(!month||monthKey(g.date)===month);});
   var sum=rs.reduce(function(a,g){return a+g.score;},0),mx=rs.reduce(function(a,g){return a+g.max;},0);
   return {n:rs.length,sum:sum,max:mx,avg:rs.length?sum/rs.length:null,pct:mx?sum/mx*100:null};
 }
 /* الدرجة المعتمدة = (مجموع درجات الطالب ÷ الممكن) × الوزن. الرموز تُقرَّب إلى نصف درجة. */
-function catFinal(s,k){
+function catFinal(s,k,month){
   if(!k||!(k.weight>0))return null;
-  var st=rawStats(s,k.id);if(!st.n||!st.max)return null;
+  var st=rawStats(s,k.id,month);if(!st.n||!st.max)return null;
   var v=st.sum/st.max*k.weight;
   return k.kind==='sym'?Math.round(v*2)/2:r2(v);
 }
-function statsFor(s,catId){
-  if(catId)return rawStats(s,catId);
+function statsFor(s,catId,month){
+  if(catId)return rawStats(s,catId,month);
   var known={},sum=0,mx=0,n=0;
   S.settings.cats.forEach(function(k){
-    known[k.id]=1;var st=rawStats(s,k.id);if(!st.n)return;n+=st.n;
-    if(k.weight>0){sum+=catFinal(s,k);mx+=k.weight;}else{sum+=st.sum;mx+=st.max;}
+    known[k.id]=1;var st=rawStats(s,k.id,month);if(!st.n)return;n+=st.n;
+    if(k.weight>0){sum+=catFinal(s,k,month);mx+=k.weight;}else{sum+=st.sum;mx+=st.max;}
   });
-  s.grades.forEach(function(g){if(!known[g.cat]){sum+=g.score;mx+=g.max;n++;}});
+  s.grades.forEach(function(g){if(!known[g.cat]&&(!month||monthKey(g.date)===month)){sum+=g.score;mx+=g.max;n++;}});
   return {n:n,sum:sum,max:mx,avg:n?sum/n:null,pct:mx?sum/mx*100:null};
 }
 function classPct(c){var sum=0,mx=0;c.students.forEach(function(s){var t=statsFor(s);sum+=t.sum;mx+=t.max;});return mx?sum/mx*100:null;}
@@ -91,7 +92,7 @@ function groupsList(){
   });
   return out;
 }
-function groupTotal(s,g){var sum=0,any=false;g.cats.forEach(function(k){var f=catFinal(s,k);if(f!=null){sum+=f;any=true;}});return any?r2(sum):null;}
+function groupTotal(s,g,month){var sum=0,any=false;g.cats.forEach(function(k){var f=catFinal(s,k,month);if(f!=null){sum+=f;any=true;}});return any?r2(sum):null;}
 function symOf(v){return v>=0.99?'+':v>0?'✓':'−';}
 function symCat(){return S.settings.cats.find(function(k){return k.kind==='sym';})||null;}
 function symGrade(s,k,date){return s.grades.find(function(g){return g.cat===k.id&&g.date===date&&g.slot==null;})||null;}
@@ -108,9 +109,9 @@ function cycleSym(c,sid){
   var i=order.findIndex(function(v){return v===cur;});
   setSym(c,st,k,U.attDate,order[(i+1)%order.length]);renderKeep();
 }
-function attOf(c,sid){
+function attOf(c,sid,month){
   var p=0,a=0,l=0,e=0,m=S.att[c.id]||{};
-  for(var d in m){var v=m[d][sid];if(v==='p')p++;else if(v==='a')a++;else if(v==='l')l++;else if(v==='e')e++;}
+  for(var d in m){if(month&&d.slice(0,7)!==month)continue;var v=m[d][sid];if(v==='p')p++;else if(v==='a')a++;else if(v==='l')l++;else if(v==='e')e++;}
   var tot=p+a+l+e;return {p:p,a:a,l:l,e:e,tot:tot,rate:tot?(p+l)/tot*100:null};
 }
 function attOn(c,date,sid){var m=S.att[c.id];return (m&&m[date]&&m[date][sid])||'';}
@@ -393,7 +394,8 @@ function catCard(c,s,k){
   var st=statsFor(s,k.id),slots='';
   for(var i=0;i<n;i++){var g=by[i],on=U.pad&&U.pad.cat===k.id&&U.pad.slot===i;
     slots+='<button type="button" class="slot'+(g?' has':'')+(on?' sel':'')+'" data-act="slot" data-cat="'+k.id+'" data-slot="'+i+'"><i>'+(i+1)+'</i><b>'+(g?fmt(g.score):'—')+'</b></button>';}
-  return '<article class="cat"><header><h3>'+esc(k.name)+'</h3><span class="muted">من '+fmt(k.max)+' · '+(st.n?'المتوسط '+fmt(st.avg)+' ('+fmt1(st.pct)+'%)':'لا توجد درجات')+(k.weight>0&&st.n?' · المعتمدة '+fmt(catFinal(s,k))+' من '+fmt(k.weight):'')+'</span></header><div class="slots">'+slots+'</div>'+(U.pad&&U.pad.cat===k.id?padHtml(k,s):'')+'</article>';
+  slots+='<button type="button" class="slot'+(U.pad&&U.pad.cat===k.id&&U.pad.slot===n?' sel':'')+'" data-act="slot" data-cat="'+k.id+'" data-slot="'+n+'" title="إضافة درجة جديدة"><i>جديدة</i><b>+</b></button>';
+  return '<article class="cat"><header><h3>'+esc(k.name)+'</h3><span class="muted">من '+fmt(k.max)+' · '+(st.n?'المتوسط '+fmt(st.pct/100*k.max)+' ('+fmt1(st.pct)+'%)':'لا توجد درجات')+(k.weight>0&&st.n?' · المعتمدة '+fmt(catFinal(s,k))+' من '+fmt(k.weight):'')+'</span></header><div class="slots">'+slots+'</div>'+(U.pad&&U.pad.cat===k.id?padHtml(k,s):'')+'</article>';
 }
 function manualForm(c,s){
   var cats=S.settings.cats.filter(function(k){return k.kind!=='sym';}),sel=cats.find(function(k){return k.id===U.mcat;})||cats[0];
@@ -409,10 +411,10 @@ function manualForm(c,s){
 function vStGrades(c,s){
   var cats=S.settings.cats;
   var mode='<div class="seg"><button type="button" class="'+(U.gmode==='quick'?'on':'')+'" data-act="gmode" data-m="quick">إدخال سريع</button><button type="button" class="'+(U.gmode==='manual'?'on':'')+'" data-act="gmode" data-m="manual">إدخال يدوي</button></div>';
-  var body=U.gmode==='quick'?(cats.length?'<p class="muted" style="margin-bottom:12px">اضغط على خانة الدرجة ثم اضغط الرقم مباشرة لتسجيله في سجل الطالب.</p><div class="catgrid">'+cats.map(function(k){return catCard(c,s,k);}).join('')+'</div>':'<p class="empty-note">لا توجد أنواع درجات. أضفها من تبويب الإعدادات.</p>'):manualForm(c,s);
+  var body=U.gmode==='quick'?(cats.length?'<div class="row" style="align-items:center;margin:0 0 12px"><label class="f inline">تاريخ الإدخال<input type="date" value="'+U.attDate+'" data-ch="attDate"></label><span class="muted">اضغط على خانة الدرجة ثم الرقم. يمكنك تسجيل أكثر من درجة من النوع نفسه في اليوم الواحد، وزر + يضيف خانة جديدة.</span></div><div class="catgrid">'+cats.map(function(k){return catCard(c,s,k);}).join('')+'</div>':'<p class="empty-note">لا توجد أنواع درجات. أضفها من تبويب الإعدادات.</p>'):manualForm(c,s);
   var recs=s.grades.slice().sort(function(a,b){return String(b.date).localeCompare(String(a.date));});
-  var log=recs.length?'<div class="tablewrap"><table><thead><tr><th>التاريخ</th><th>النوع</th><th>الدرجة</th><th>من</th><th>النسبة</th><th>ملاحظة</th><th></th></tr></thead><tbody>'+recs.map(function(g){var k=catById(g.cat);
-    return '<tr><td class="num">'+esc(g.date)+'</td><td>'+esc(k?k.name:'(نوع محذوف)')+(g.slot!=null?' #'+(g.slot+1):'')+'</td>'+(k&&k.kind==='sym'?'<td class="num"><b>'+symOf(g.score)+'</b></td><td class="num">—</td><td class="num">—</td>':'<td class="num"><b>'+fmt(g.score)+'</b></td><td class="num">'+fmt(g.max)+'</td><td class="num">'+fmt1(g.score/g.max*100)+'%</td>')+'<td>'+esc(g.note)+'</td><td><button type="button" class="btn ghost sm" data-act="delGrade" data-gid="'+g.id+'">حذف</button></td></tr>';}).join('')+'</tbody></table></div>':'<p class="empty-note">لم تسجَّل أي درجة لهذا الطالب بعد.</p>';
+  var log=recs.length?'<div class="tablewrap"><table><thead><tr><th>التاريخ</th><th>الشهر</th><th>النوع</th><th>الدرجة</th><th>من</th><th>النسبة</th><th>ملاحظة</th><th></th></tr></thead><tbody>'+recs.map(function(g){var k=catById(g.cat);
+    return '<tr><td><input type="date" value="'+esc(g.date)+'" data-ch="gradeDate" data-gid="'+g.id+'" aria-label="تاريخ الدرجة"></td><td>'+esc(monthLabel(monthKey(g.date)))+'</td><td>'+esc(k?k.name:'(نوع محذوف)')+(g.slot!=null?' #'+(g.slot+1):'')+'</td>'+(k&&k.kind==='sym'?'<td class="num"><b>'+symOf(g.score)+'</b></td><td class="num">—</td><td class="num">—</td>':'<td class="num"><b>'+fmt(g.score)+'</b></td><td class="num">'+fmt(g.max)+'</td><td class="num">'+fmt1(g.score/g.max*100)+'%</td>')+'<td>'+esc(g.note)+'</td><td><button type="button" class="btn ghost sm" data-act="delGrade" data-gid="'+g.id+'">حذف</button></td></tr>';}).join('')+'</tbody></table></div>':'<p class="empty-note">لم تسجَّل أي درجة لهذا الطالب بعد.</p>';
   return groupCards(s)+'<section class="card"><div class="cardhead"><h2>إدخال الدرجات</h2>'+mode+'</div>'+body+'</section>'+
     '<section class="card"><div class="cardhead"><h2>سجل الطالب</h2><span class="muted">'+recs.length+' درجة</span></div>'+log+'</section>';
 }
@@ -426,8 +428,11 @@ function vStAtt(c,s){
       return '<tr><td class="num">'+d+'</td><td><select data-ch="attDay" data-date="'+d+'">'+ATT_KEYS.map(function(k){return '<option value="'+k+'"'+(v===k?' selected':'')+'>'+ATT[k].t+'</option>';}).join('')+'<option value="">مسح التسجيل</option></select></td></tr>';}).join('')+'</tbody></table></div>':'<p class="empty-note">لا توجد أيام مسجلة لهذا الطالب.</p>')+'</section>';
 }
 function exOptions(){
-  return '<div class="opts"><label class="opt'+(U.exType==='all'?' on':'')+'"><input type="radio" name="exType" value="all" data-ch="exOpt" data-k="exType"'+(U.exType==='all'?' checked':'')+'><div><b>كل الدرجات المدخلة</b><span>صف لكل طالب وعمود لكل درجة (اختبار قصير 1، 2، 3 …) مع المجموع والنسبة، وورقة ثانية بالسجل التفصيلي.</span></div></label>'+
-    '<label class="opt'+(U.exType==='avg'?' on':'')+'"><input type="radio" name="exType" value="avg" data-ch="exOpt" data-k="exType"'+(U.exType==='avg'?' checked':'')+'><div><b>متوسط الدرجات حسب التصنيف</b><span>صف لكل طالب وعمود لمتوسط كل نوع من الدرجات (اختبارات، واجبات، مشاركة…) مع الإجمالي.</span></div></label></div>'+
+  var o=function(v,t,d){return '<label class="opt'+(U.exType===v?' on':'')+'"><input type="radio" name="exType" value="'+v+'" data-ch="exOpt" data-k="exType"'+(U.exType===v?' checked':'')+'><div><b>'+t+'</b><span>'+d+'</span></div></label>';};
+  return '<div class="opts">'+
+    o('both','الدرجات والمتوسطات معاً (الأفضل)','ملف واحد بأوراق: المتوسطات، كل الدرجات، السجل التفصيلي بالتاريخ والشهر، والمتوسط الشهري.')+
+    o('all','كل الدرجات المدخلة','ورقة بكل درجة في عمود، وورقة سجل تفصيلي لكل درجة بتاريخها وشهرها.')+
+    o('avg','متوسط الدرجات حسب التصنيف','متوسط كل نوع (واجب، اختبار، مشاركة…) والمجموعات، وورقة المتوسط الشهري.')+'</div>'+
     '<label class="chk"><input type="checkbox" data-ch="exOpt" data-k="exAtt"'+(U.exAtt?' checked':'')+'> إضافة أعمدة الحضور والغياب</label>';
 }
 function vStExport(c,s){
@@ -439,13 +444,16 @@ function vStExport(c,s){
 
 /* export tab */
 function previewHtml(sh){
-  if(!sh.rows.length)return '<p class="empty-note">لا توجد بيانات للتصدير.</p>';
-  var shown=sh.rows.slice(0,40);
-  var h1=sh.head1.map(function(h){return '<th colspan="'+(h.cs||1)+'" rowspan="'+(h.rs||1)+'">'+esc(h.t)+'</th>';}).join('');
-  var h2=sh.head2?'<tr>'+sh.head2.filter(function(t){return t!=null;}).map(function(t){return '<th>'+esc(t)+'</th>';}).join('')+'</tr>':'';
+  if(!sh.rows.length)return '<p class="empty-note">لا توجد بيانات لهذه الورقة بعد.</p>';
+  var shown=sh.rows.slice(0,40),colColor=[];
+  sh.head1.forEach(function(h){var cs=h.cs||1;for(var j=0;j<cs;j++)colColor.push(h.c==null?null:h.c);});
+  var th=function(c){return c==null?'':' style="background:#'+PAL[c][0]+';color:#15302e"';};
+  var td=function(c){return c==null?'':' style="background:#'+PAL[c][1]+';color:#15302e"';};
+  var h1=sh.head1.map(function(h){return '<th colspan="'+(h.cs||1)+'" rowspan="'+(h.rs||1)+'"'+th(h.c)+'>'+esc(h.t)+'</th>';}).join('');
+  var h2=sh.head2?'<tr>'+sh.head2.map(function(t,j){return t==null?'':'<th'+th(colColor[j])+'>'+esc(t)+'</th>';}).join('')+'</tr>':'';
   var body=shown.map(function(r,i){
-    var sum=sh.sum&&sh.sum.indexOf(i)>=0;
-    return '<tr'+(sum?' class="sumrow"':'')+'>'+r.map(function(v,j){return '<td class="'+(typeof v==='number'?'num':'')+'">'+esc(v)+'</td>';}).join('')+'</tr>';
+    var sum=sh.sum&&sh.sum.indexOf(i)>=0,rc=sh.rowColors?sh.rowColors[i]:null;
+    return '<tr'+(sum?' class="sumrow"':'')+'>'+r.map(function(v,j){var c=sum?null:(rc!=null?rc:colColor[j]);return '<td class="'+(typeof v==='number'?'num':'')+'"'+td(c)+'>'+esc(v)+'</td>';}).join('')+'</tr>';
   }).join('');
   return '<div class="tablewrap"><table class="xp"><thead><tr>'+h1+'</tr>'+h2+'</thead><tbody>'+body+'</tbody></table></div>'+
     (sh.rows.length>shown.length?'<p class="muted" style="margin-top:8px">المعاينة تعرض أول '+shown.length+' صفاً من '+sh.rows.length+'. ملف Excel يحتوي كل الصفوف.</p>':'');
@@ -457,6 +465,7 @@ function vExport(){
   U.exPick=(U.exPick||[]).filter(function(id){return byId(c,id);});
   var scope=U.exScope;if(scope==='student'&&!U.exStudent)scope='class';
   var wb=buildWorkbook(c,scope,U.exStudent,U.exType,U.exAtt);
+  var si=Math.min(U.exSheet||0,wb.sheets.length-1);
   var scopes=[['class','كل طلاب الفصل'],['student','طالب واحد'],['pick','طلاب معينون']];
   var extra='';
   if(scope==='student'){
@@ -470,8 +479,10 @@ function vExport(){
     '<section class="card"><h2>ما الذي تريد تصديره؟</h2>'+
     '<div class="row" style="align-items:center"><div class="seg">'+scopes.map(function(x){return '<button type="button" class="'+(scope===x[0]?'on':'')+'" data-act="exScope" data-s="'+x[0]+'">'+x[1]+'</button>';}).join('')+'</div>'+extra+'</div>'+
     exOptions()+
-    '<div class="row"><button type="button" class="btn pri" data-act="doExport" '+args+'>تنزيل ملف Excel</button><button type="button" class="btn" data-act="copyExport" '+args+'>نسخ كجدول</button></div></section>'+
-    '<section class="card"><div class="cardhead"><h2>معاينة</h2><span class="muted">'+esc(wb.name)+'</span></div>'+previewHtml(wb.sheets[0])+'</section>';
+    '<div class="row"><button type="button" class="btn pri" data-act="doExport" '+args+'>تنزيل ملف Excel</button><button type="button" class="btn" data-act="copyExport" '+args+'>نسخ الورقة المعروضة كجدول</button></div></section>'+
+    '<section class="card"><div class="cardhead"><h2>معاينة الورقة</h2><span class="muted">'+esc(wb.name)+'</span></div>'+
+    (wb.sheets.length>1?'<div class="seg" style="margin-bottom:12px">'+wb.sheets.map(function(sh,i){return '<button type="button" class="'+(i===si?'on':'')+'" data-act="exSheet" data-i="'+i+'">'+esc(sh.name)+'</button>';}).join('')+'</div>':'')+
+    previewHtml(wb.sheets[si])+'</section>';
 }
 
 /* settings */
@@ -492,7 +503,7 @@ function vSettings(){
     '<div class="row" style="margin-top:14px"><button type="button" class="btn" data-act="newClass">+ فصل جديد</button><button type="button" class="btn danger" data-act="delClass">حذف هذا الفصل</button></div></section>':'<section class="card"><h2>الفصول</h2><p class="muted" style="margin-top:6px">لا توجد فصول بعد.</p><div class="row"><button type="button" class="btn pri" data-act="newClass">+ فصل جديد</button></div></section>';
   return '<div class="head"><h1>الإعدادات</h1></div>'+
     '<section class="card"><div class="cardhead"><h2>أنواع الدرجات</h2></div><p class="muted">حدّد نوع الدرجة وكم درجة تُسجَّل منه، والدرجة الكاملة لكل درجة. تظهر هذه الأنواع في الإدخال السريع والإدخال اليدوي وفي التصدير.</p><p class="muted" style="margin-top:6px"><b>الدرجة المعتمدة:</b> إن كتبتَ رقماً (مثل 6) تُحوَّل درجات النوع إلى هذا الرقم بالمعادلة (مجموع درجات الطالب ÷ الممكن) × الرقم، وغياب الطالب بعذر لا يُحسب صفراً لأن المتوسط يؤخذ من الدرجات المدخلة فقط. <b>المجموعة:</b> الأنواع التي تحمل اسم مجموعة واحداً تُجمع معاً (مثل المشاركة اليومية من 12). <b>رموز + ✓ −:</b> للتفاعل داخل الصف، وتُسجَّل من خريطة الجلوس (وضع تسجيل التفاعل).</p>'+
-    '<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>نوع الدرجة</th><th>طريقة الإدخال</th><th>عدد الدرجات</th><th>الدرجة الكاملة لكل درجة</th><th>الدرجة المعتمدة</th><th>المجموعة</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    '<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>نوع الدرجة</th><th>طريقة الإدخال</th><th>عدد الخانات الظاهرة</th><th>الدرجة الكاملة لكل درجة</th><th>الدرجة المعتمدة</th><th>المجموعة</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
     '<div class="row" style="margin-top:12px"><button type="button" class="btn pri" data-act="addCat">+ إضافة نوع درجة</button><button type="button" class="btn" data-act="tplDaily">إضافة قالب المشاركة اليومية (12 درجة)</button></div></section>'+
     clsCard+
     '<section class="card"><h2>نسخة احتياطية</h2><p class="muted" style="margin-top:6px">نزّل نسخة من كل الفصول والطلاب والدرجات والحضور، أو استعدها من ملف سابق.</p>'+
@@ -521,38 +532,101 @@ function exStudents(c,scope,sid){
   if(scope==='pick'){var set={};(U.exPick||[]).forEach(function(i){set[i]=1;});return all.filter(function(s){return set[s.id];});}
   return all;
 }
+var PAL=[['9FD3CB','E4F3F0'],['F2CF8E','FBF0D8'],['A9C8EC','E5EEF9'],['CDB6E6','F0E9F8'],['B6DDA0','EBF5E3'],['F0B4B4','FAE6E6']];
+var MONTHS=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+function monthLabel(k){var p=String(k).split('-');if(p.length<2||!p[0]||!MONTHS[(+p[1])-1])return 'بدون تاريخ';return MONTHS[(+p[1])-1]+' '+p[0];}
 function buildWorkbook(c,scope,sid,type,withAtt){
-  var cats=S.settings.cats,list=exStudents(c,scope,sid);
+  var cats=S.settings.cats,list=exStudents(c,scope,sid),groups=groupsList();
   var lbl=scope==='student'&&list[0]?list[0].name:scope==='pick'?'طلاب محددون':'كل الفصل';
-  var typeLbl=type==='all'?'كل الدرجات المدخلة':'متوسط الدرجات حسب التصنيف';
+  var typeLbl=type==='both'?'الدرجات والمتوسطات':type==='all'?'كل الدرجات المدخلة':'متوسط الدرجات حسب التصنيف';
   var title=c.name+(c.subject?' - '+c.subject:'')+'  |  '+typeLbl+'  |  '+lbl+'  |  '+today();
   var safe=function(x){return String(x).replace(/[\\\/:*?"<>|]+/g,'').trim().replace(/\s+/g,'-');};
-  var name=safe(c.name)+'-'+(type==='all'?'كل-الدرجات':'متوسط-الدرجات')+'-'+safe(lbl)+'.xlsx';
-  var known={};cats.forEach(function(k){known[k.id]=1;});
-  var addFinal=function(k){if(k.weight>0){head1.push({t:k.name+' - المعتمدة',cs:1});head2.push('من '+fmt(k.weight));cols.push(function(s){var f=catFinal(s,k);return f==null?'':f;});}};
-  var addGroups=function(){groupsList().forEach(function(g){head1.push({t:g.name,cs:1});head2.push('المجموع من '+fmt(g.max));cols.push(function(s){var t=groupTotal(s,g);return t==null?'':t;});});};
-  var byDate=function(a,b){return String(a.date).localeCompare(String(b.date));};
-  var head1=[{t:'اسم الطالب',rs:2},{t:'رقم الطالب',rs:2}],head2=[null,null],cols=[],note='';
-  if(type==='all'){
+  var name=safe(c.name)+'-'+safe(typeLbl)+'-'+safe(lbl)+'.xlsx';
+  /* لون لكل مجموعة، ولون لكل نوع خارج المجموعات */
+  var gi={},colorOf={},next=0;
+  groups.forEach(function(g){gi[g.name]=(next++)%PAL.length;});
+  cats.forEach(function(k){if(k.weight>0&&k.group)colorOf[k.id]=gi[k.group];});
+  cats.forEach(function(k){if(colorOf[k.id]==null)colorOf[k.id]=(next++)%PAL.length;});
+  var byDate=function(a,b){return String(a.date).localeCompare(String(b.date))||((a.slot==null?999:a.slot)-(b.slot==null?999:b.slot));};
+  var gradesOf=function(s,id,m){return s.grades.filter(function(g){return g.cat===id&&(!m||monthKey(g.date)===m);}).sort(byDate);};
+  var NUM2=['اسم الطالب','رقم الطالب'];
+
+  function addTail(head1,head2,cols){
+    groups.forEach(function(g){head1.push({t:g.name,cs:1,c:gi[g.name]});head2.push('المجموع من '+fmt(g.max));cols.push(function(s,m){var t=groupTotal(s,g,m);return t==null?'':t;});});
+    head1.push({t:'الإجمالي',cs:3});head2.push('المجموع','من','النسبة %');
+    cols.push(function(s,m){var t=statsFor(s,undefined,m);return t.n?r2(t.sum):'';});
+    cols.push(function(s,m){var t=statsFor(s,undefined,m);return t.n?r2(t.max):'';});
+    cols.push(function(s,m){var t=statsFor(s,undefined,m);return t.n?r1(t.pct):'';});
+    if(withAtt){
+      head1.push({t:'الحضور والغياب',cs:5});head2.push('حضور','غياب','تأخر','بعذر','نسبة الحضور %');
+      ['p','a','l','e'].forEach(function(k){cols.push(function(s,m){return attOf(c,s.id,m)[k];});});
+      cols.push(function(s,m){var a=attOf(c,s.id,m);return a.rate==null?'':r1(a.rate);});
+    }
+  }
+  function addFinal(head1,head2,cols,k){
+    if(!(k.weight>0))return;
+    head1.push({t:k.name+' - المعتمدة',cs:1,c:colorOf[k.id]});head2.push('من '+fmt(k.weight));
+    cols.push(function(s,m){var f=catFinal(s,k,m);return f==null?'':f;});
+  }
+  function withAvgRow(rows,startCol){
+    var sum=[];
+    if(rows.length>1){
+      var avg=['متوسط المجموعة',''];
+      for(var i=2;i<rows[0].length;i++){
+        var nums=rows.map(function(r){return r[i];}).filter(function(v){return typeof v==='number';});
+        avg.push(nums.length?r2(nums.reduce(function(a,b){return a+b;},0)/nums.length):'');
+      }
+      sum.push(rows.length);rows.push(avg);
+    }
+    return sum;
+  }
+
+  /* المتوسطات (كل الفترة) أو المتوسط الشهري */
+  function summarySheet(monthMode){
+    var head1=[{t:NUM2[0],rs:2},{t:monthMode?'الشهر':NUM2[1],rs:2}],head2=[null,null],cols=[];
     cats.forEach(function(k){
+      var col=colorOf[k.id];
       if(k.kind==='sym'){
-        var byD=function(s){return s.grades.filter(function(g){return g.cat===k.id;}).sort(byDate);},ns0=0;
-        list.forEach(function(s){ns0=Math.max(ns0,byD(s).length);});
-        if(ns0){head1.push({t:k.name+' (رموز بالتاريخ)',cs:ns0});for(var i0=0;i0<ns0;i0++){head2.push(i0+1);(function(i0){cols.push(function(s){var a=byD(s);return a[i0]?symOf(a[i0].score):'';});})(i0);}}
-        addFinal(k);return;
+        head1.push({t:k.name+' (عدد المرات)',cs:3,c:col});head2.push('+','✓','−');
+        [1,0.75,0].forEach(function(v){cols.push(function(s,m){return gradesOf(s,k.id,m).filter(function(g){return Math.abs(g.score-v)<0.01;}).length;});});
+      }else{
+        head1.push({t:k.name+' (من '+fmt(k.max)+')',cs:3,c:col});head2.push('المتوسط','النسبة %','العدد');
+        cols.push(function(s,m){var st=rawStats(s,k.id,m);return st.n&&st.pct!=null?r2(st.pct/100*k.max):'';});
+        cols.push(function(s,m){var st=rawStats(s,k.id,m);return st.n?r1(st.pct):'';});
+        cols.push(function(s,m){var st=rawStats(s,k.id,m);return st.n?st.n:'';});
       }
-      var ns=k.count;
-      list.forEach(function(s){s.grades.forEach(function(g){if(g.cat===k.id&&g.slot!=null)ns=Math.max(ns,g.slot+1);});});
-      head1.push({t:k.name+' (من '+fmt(k.max)+')',cs:ns});
-      for(var i=0;i<ns;i++){head2.push(i+1);(function(i){cols.push(function(s){var g=s.grades.find(function(x){return x.cat===k.id&&x.slot===i;});return g?g.score:'';});})(i);}
-      var nm=0;
-      list.forEach(function(s){nm=Math.max(nm,s.grades.filter(function(g){return g.cat===k.id&&g.slot==null;}).length);});
-      if(nm){
-        head1.push({t:k.name+' - يدوي',cs:nm});
-        for(var j=0;j<nm;j++){head2.push(j+1);(function(j){cols.push(function(s){var a=s.grades.filter(function(g){return g.cat===k.id&&g.slot==null;}).sort(byDate);return a[j]?a[j].score:'';});})(j);}
-        note='الدرجات اليدوية: الدرجة النهائية لكل درجة مكتوبة في ورقة «السجل التفصيلي».';
+      addFinal(head1,head2,cols,k);
+    });
+    addTail(head1,head2,cols);
+    var rows=[],sum=[];
+    if(!monthMode){
+      rows=list.map(function(s){return [s.name,s.num].concat(cols.map(function(f){return f(s);}));});
+      sum=withAvgRow(rows);
+    }else{
+      var months={};
+      list.forEach(function(s){s.grades.forEach(function(g){months[monthKey(g.date)]=1;});});
+      Object.keys(months).sort().forEach(function(m){
+        list.forEach(function(s){
+          if(!s.grades.some(function(g){return monthKey(g.date)===m;}))return;
+          rows.push([s.name,monthLabel(m)].concat(cols.map(function(f){return f(s,m);})));
+        });
+      });
+    }
+    return {name:monthMode?'المتوسط الشهري':'المتوسطات',title:title,head1:head1,head2:head2,rows:rows,sum:sum,note:'',freezeCols:1};
+  }
+
+  /* كل درجة في عمود */
+  function gridSheet(){
+    var head1=[{t:NUM2[0],rs:2},{t:NUM2[1],rs:2}],head2=[null,null],cols=[],known={};
+    cats.forEach(function(k){
+      known[k.id]=1;var col=colorOf[k.id],sym=k.kind==='sym';
+      var ns=sym?0:k.count;
+      list.forEach(function(s){ns=Math.max(ns,gradesOf(s,k.id).length);});
+      if(ns){
+        head1.push({t:k.name+(sym?' (رموز بالتاريخ)':' (من '+fmt(k.max)+')'),cs:ns,c:col});
+        for(var i=0;i<ns;i++){head2.push(i+1);(function(i){cols.push(function(s){var a=gradesOf(s,k.id);return a[i]?(sym?symOf(a[i].score):a[i].score):'';});})(i);}
       }
-      addFinal(k);
+      addFinal(head1,head2,cols,k);
     });
     var no=0;
     list.forEach(function(s){no=Math.max(no,s.grades.filter(function(g){return !known[g.cat];}).length);});
@@ -560,46 +634,29 @@ function buildWorkbook(c,scope,sid,type,withAtt){
       head1.push({t:'نوع محذوف',cs:no});
       for(var q=0;q<no;q++){head2.push(q+1);(function(q){cols.push(function(s){var a=s.grades.filter(function(g){return !known[g.cat];}).sort(byDate);return a[q]?a[q].score:'';});})(q);}
     }
-  }else{
-    cats.forEach(function(k){
-      if(k.kind==='sym'){head1.push({t:k.name+' (عدد المرات)',cs:3});head2.push('+','✓','−');[1,0.75,0].forEach(function(v){cols.push(function(s){return s.grades.filter(function(g){return g.cat===k.id&&Math.abs(g.score-v)<0.01;}).length;});});addFinal(k);return;}
-      head1.push({t:k.name+' (من '+fmt(k.max)+')',cs:2});head2.push('المتوسط','النسبة %');
-      cols.push(function(s){var st=statsFor(s,k.id);return st.n?r2(st.avg):'';});
-      cols.push(function(s){var st=statsFor(s,k.id);return st.n?r1(st.pct):'';});
-      addFinal(k);
-    });
+    addTail(head1,head2,cols);
+    var rows=list.map(function(s){return [s.name,s.num].concat(cols.map(function(f){return f(s);}));});
+    var sum=withAvgRow(rows);
+    return {name:'كل الدرجات',title:title,head1:head1,head2:head2,rows:rows,sum:sum,note:'الدرجات مرتبة في كل نوع من الأقدم إلى الأحدث، وتاريخ كل درجة وشهرها في ورقة «السجل التفصيلي».',freezeCols:1};
   }
-  addGroups();
-  head1.push({t:'الإجمالي',cs:3});head2.push('المجموع','من','النسبة %');
-  cols.push(function(s){var t=statsFor(s);return t.n?r2(t.sum):'';});
-  cols.push(function(s){var t=statsFor(s);return t.n?r2(t.max):'';});
-  cols.push(function(s){var t=statsFor(s);return t.n?r1(t.pct):'';});
-  if(withAtt){
-    head1.push({t:'الحضور والغياب',cs:5});head2.push('حضور','غياب','تأخر','بعذر','نسبة الحضور %');
-    ['p','a','l','e'].forEach(function(k){cols.push(function(s){return attOf(c,s.id)[k];});});
-    cols.push(function(s){var a=attOf(c,s.id);return a.rate==null?'':r1(a.rate);});
-  }
-  var rows=list.map(function(s){return [s.name,s.num].concat(cols.map(function(f){return f(s);}));});
-  var sum=[];
-  if(rows.length>1){
-    var avg=['متوسط المجموعة',''];
-    for(var i2=2;i2<head2.length;i2++){
-      var nums=rows.map(function(r){return r[i2];}).filter(function(v){return typeof v==='number';});
-      avg.push(nums.length?r2(nums.reduce(function(a,b){return a+b;},0)/nums.length):'');
-    }
-    sum.push(rows.length);rows.push(avg);
-  }
-  var main={name:type==='all'?'كل الدرجات':'المتوسطات',title:title,head1:head1,head2:head2,rows:rows,sum:sum,note:note,freezeCols:1};
-  var sheets=[main];
-  if(type==='all'){
+
+  /* سجل كل درجة بتاريخها وشهرها */
+  function detailSheet(){
     var order=function(id){var i=cats.findIndex(function(k){return k.id===id;});return i<0?999:i;};
-    var drows=[];
+    var head1=['اسم الطالب','رقم الطالب','المجموعة','نوع الدرجة','الدرجة','الدرجة النهائية','النسبة %','التاريخ','الشهر','ملاحظة'].map(function(t){return {t:t};});
+    var rows=[],rc=[];
     list.forEach(function(s){
-      var gs=s.grades.slice().sort(function(a,b){return order(a.cat)-order(b.cat)||((a.slot==null?999:a.slot)-(b.slot==null?999:b.slot))||byDate(a,b);});
-      gs.forEach(function(g){var k=catById(g.cat);drows.push(k&&k.kind==='sym'?[s.name,s.num,k.name,'رمز',symOf(g.score),'','',g.date,g.note]:[s.name,s.num,k?k.name:'(نوع محذوف)',g.slot!=null?g.slot+1:'يدوي',g.score,g.max,r1(g.score/g.max*100),g.date,g.note]);});
+      var gs=s.grades.slice().sort(function(a,b){return String(a.date).localeCompare(String(b.date))||order(a.cat)-order(b.cat)||((a.slot==null?999:a.slot)-(b.slot==null?999:b.slot));});
+      gs.forEach(function(g){
+        var k=catById(g.cat),sym=k&&k.kind==='sym';
+        rows.push([s.name,s.num,k&&k.weight>0&&k.group?k.group:'',k?k.name:'(نوع محذوف)',sym?symOf(g.score):g.score,sym?'':g.max,sym?'':r1(g.score/g.max*100),g.date,monthLabel(monthKey(g.date)),g.note]);
+        rc.push(k?colorOf[k.id]:null);
+      });
     });
-    sheets.push({name:'السجل التفصيلي',title:title,head1:['اسم الطالب','رقم الطالب','نوع الدرجة','رقم الدرجة','درجة الطالب','الدرجة النهائية','النسبة %','التاريخ','ملاحظة'].map(function(t){return {t:t};}),head2:null,rows:drows,sum:[],note:'',freezeCols:1});
+    return {name:'السجل التفصيلي',title:title,head1:head1,head2:null,rows:rows,rowColors:rc,sum:[],filter:true,note:'كل صف درجة واحدة بتاريخها وشهرها، ولون الصف حسب النوع. استعمل أسهم العناوين للتصفية حسب الطالب أو النوع أو الشهر.',freezeCols:1};
   }
+
+  var sheets=type==='both'?[summarySheet(false),gridSheet(),detailSheet(),summarySheet(true)]:type==='all'?[gridSheet(),detailSheet()]:[summarySheet(false),summarySheet(true)];
   return {sheets:sheets,name:name,count:list.length};
 }
 function flatHead(sh){
@@ -652,33 +709,35 @@ function cellXml(r,c,v,s){
   return '<c r="'+ref+'" s="'+s+'" t="inlineStr"><is><t xml:space="preserve">'+xe(v)+'</t></is></c>';
 }
 function sheetXml(sh){
-  var nc=sh.head1.reduce(function(a,h){return a+(h.cs||1);},0),rows=[],merges=[],r=1;
+  var nc=sh.head1.reduce(function(a,h){return a+(h.cs||1);},0),rows=[],merges=[],r=1,colColor=[];
+  sh.head1.forEach(function(h){var cs=h.cs||1;for(var j=0;j<cs;j++)colColor.push(h.c==null?null:h.c);});
   if(sh.title){rows.push('<row r="1" ht="28" customHeight="1">'+cellXml(1,0,sh.title,1)+'</row>');merges.push('A1:'+colName(nc-1)+'1');r=2;}
   var hr1=r,hr2=sh.head2?r+1:0,cells='',col=0;
   sh.head1.forEach(function(h){
-    var cs=h.cs||1,rs=h.rs||1;
-    for(var j=0;j<cs;j++)cells+=cellXml(hr1,col+j,j===0?h.t:'',2);
+    var cs=h.cs||1,rs=h.rs||1,st=h.c!=null?7+h.c*3:2;
+    for(var j=0;j<cs;j++)cells+=cellXml(hr1,col+j,j===0?h.t:'',st);
     if(cs>1||rs>1)merges.push(colName(col)+hr1+':'+colName(col+cs-1)+(hr1+rs-1));
     col+=cs;
   });
   rows.push('<row r="'+hr1+'" ht="24" customHeight="1">'+cells+'</row>');
   if(sh.head2){
     cells='';
-    sh.head2.forEach(function(t,j){cells+=cellXml(hr2,j,t==null?'':t,2);});
+    sh.head2.forEach(function(t,j){cells+=cellXml(hr2,j,t==null?'':t,colColor[j]!=null?7+colColor[j]*3:2);});
     rows.push('<row r="'+hr2+'" ht="22" customHeight="1">'+cells+'</row>');
   }
   var first=(hr2||hr1)+1,widths=[];
   for(var j2=0;j2<nc;j2++)widths.push(j2===0?24:j2===1?12:8);
   var grow=function(j,v){if(j<nc){var l=String(v==null?'':v).length*1.25+3;if(l>widths[j])widths[j]=Math.min(l,42);}};
-  sh.head1.forEach(function(h,i){});
   var hc=0;sh.head1.forEach(function(h){if((h.cs||1)===1)grow(hc,h.t);hc+=(h.cs||1);});
   if(sh.head2)sh.head2.forEach(function(t,j){if(t!=null)grow(j,t);});
   sh.rows.forEach(function(row,i){
-    var isSum=sh.sum&&sh.sum.indexOf(i)>=0,rr=first+i,cs='';
+    var isSum=sh.sum&&sh.sum.indexOf(i)>=0,rr=first+i,cs='',rc=sh.rowColors?sh.rowColors[i]:null;
     row.forEach(function(v,j){
       grow(j,v);
-      var text=typeof v==='string'&&v!=='';
-      cs+=cellXml(rr,j,v,j===0||text?(isSum?5:3):(isSum?6:4));
+      var text=j===0||(typeof v==='string'&&v!=='');
+      var c=isSum?null:(rc!=null?rc:colColor[j]);
+      var st=isSum?(text?5:6):c!=null?(text?9+c*3:8+c*3):(text?3:4);
+      cs+=cellXml(rr,j,v,st);
     });
     rows.push('<row r="'+rr+'">'+cs+'</row>');
   });
@@ -694,20 +753,27 @@ function sheetXml(sh){
     '<sheetFormatPr defaultRowHeight="18"/>'+
     '<cols>'+widths.map(function(w,i){return '<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+Math.round(w*10)/10+'" customWidth="1"/>';}).join('')+'</cols>'+
     '<sheetData>'+rows.join('')+'</sheetData>'+
+    (sh.filter&&sh.rows.length?'<autoFilter ref="A'+hr1+':'+colName(nc-1)+(first+sh.rows.length-1)+'"/>':'')+
     (merges.length?'<mergeCells count="'+merges.length+'">'+merges.map(function(m){return '<mergeCell ref="'+m+'"/>';}).join('')+'</mergeCells>':'')+
     '<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/><pageSetup orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>';
 }
 function stylesXml(){
   var b='<border><left style="thin"><color rgb="FFBFD0CE"/></left><right style="thin"><color rgb="FFBFD0CE"/></right><top style="thin"><color rgb="FFBFD0CE"/></top><bottom style="thin"><color rgb="FFBFD0CE"/></bottom><diagonal/></border>';
   var f=function(extra){return '<font>'+extra+'<name val="Arial"/><family val="2"/></font>';};
+  var fill=function(hex){return '<fill><patternFill patternType="solid"><fgColor rgb="FF'+hex+'"/><bgColor indexed="64"/></patternFill></fill>';};
+  var fills=fill('0E6B62')+fill('E3F0EE'),xfs='';
+  PAL.forEach(function(p,i){
+    fills+=fill(p[0])+fill(p[1]);
+    xfs+='<xf numFmtId="0" fontId="3" fillId="'+(4+i*2)+'" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'+
+      '<xf numFmtId="0" fontId="0" fillId="'+(5+i*2)+'" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'+
+      '<xf numFmtId="0" fontId="0" fillId="'+(5+i*2)+'" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" readingOrder="2"/></xf>';
+  });
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'+
-    '<fonts count="4">'+f('<sz val="11"/>')+f('<b/><sz val="14"/><color rgb="FF0E6B62"/>')+f('<b/><sz val="11"/><color rgb="FFFFFFFF"/>')+f('<b/><sz val="11"/>')+'</fonts>'+
-    '<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'+
-    '<fill><patternFill patternType="solid"><fgColor rgb="FF0E6B62"/><bgColor indexed="64"/></patternFill></fill>'+
-    '<fill><patternFill patternType="solid"><fgColor rgb="FFE3F0EE"/><bgColor indexed="64"/></patternFill></fill></fills>'+
+    '<fonts count="4">'+f('<sz val="11"/>')+f('<b/><sz val="14"/><color rgb="FF0E6B62"/>')+f('<b/><sz val="11"/><color rgb="FFFFFFFF"/>')+f('<b/><sz val="11"/><color rgb="FF15302E"/>')+'</fonts>'+
+    '<fills count="'+(4+PAL.length*2)+'"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'+fills+'</fills>'+
     '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>'+b+'</borders>'+
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'+
-    '<cellXfs count="7">'+
+    '<cellXfs count="'+(7+PAL.length*3)+'">'+
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'+
     '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'+
     '<xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'+
@@ -715,7 +781,7 @@ function stylesXml(){
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'+
     '<xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center" readingOrder="2"/></xf>'+
     '<xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'+
-    '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+    xfs+'</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
 }
 function xlsxBytes(sheets){
   var enc=new TextEncoder(),used={};
@@ -781,8 +847,8 @@ function addStudent(c,name,num,seat){
 function setSlot(c,s,k,slot,score){
   var g=s.grades.find(function(x){return x.cat===k.id&&x.slot===slot;});
   if(score==null){if(g)s.grades=s.grades.filter(function(x){return x!==g;});}
-  else if(g){g.score=score;g.max=k.max;g.date=today();}
-  else s.grades.push({id:uid(),cat:k.id,slot:slot,score:score,max:k.max,date:today(),note:''});
+  else if(g){g.score=score;g.max=k.max;g.date=U.attDate;}
+  else s.grades.push({id:uid(),cat:k.id,slot:slot,score:score,max:k.max,date:U.attDate,note:''});
   markClass(c.id);
 }
 function applyPad(score){
@@ -793,6 +859,7 @@ function applyPad(score){
   if(score==null){renderKeep();return;}
   var n=Math.max(k.count,U.pad.slot+1),next=-1;
   for(var i=U.pad.slot+1;i<n;i++){if(!s.grades.some(function(g){return g.cat===k.id&&g.slot===i;})){next=i;break;}}
+  if(next<0&&U.pad.slot>=k.count)next=U.pad.slot+1;
   U.pad=next>=0?{cat:k.id,slot:next}:null;renderKeep();
 }
 function newClassFrom(fd){
@@ -887,9 +954,10 @@ async function act(a,t,e){
         U.cls=null;U.mapOpen=false;U.student=null;ensureCls();queue();closeModal();render(true);
       }
       break;}
-    case 'exScope':U.exScope=t.getAttribute('data-s');renderKeep();break;
+    case 'exScope':U.exScope=t.getAttribute('data-s');U.exSheet=0;renderKeep();break;
+    case 'exSheet':U.exSheet=+t.getAttribute('data-i')||0;renderKeep();break;
     case 'doExport':{var wb=exportFromBtn(t);if(wb)await saveFile(wb.name,xlsxBytes(wb.sheets));break;}
-    case 'copyExport':{var wb2=exportFromBtn(t);if(wb2)await copyTextOf(toTsv(wb2.sheets[0]));break;}
+    case 'copyExport':{var wb2=exportFromBtn(t);if(wb2)await copyTextOf(toTsv(wb2.sheets[Math.min(U.exSheet||0,wb2.sheets.length-1)]));break;}
     case 'exPickAll':U.exPick=sortedStudents(c).map(function(x){return x.id;});renderKeep();break;
     case 'exPickNone':U.exPick=[];renderKeep();break;
     case 'exPickFromStudent':U.exScope='pick';U.exPick=[U.student];U.tab='export';U.student=null;U.pad=null;render(true);break;
@@ -908,8 +976,14 @@ function onChange(k,t){
     case 'pickClass':U.cls=t.value;U.student=null;U.pad=null;U.exStudent=null;render();break;
     case 'attDate':if(t.value){U.attDate=t.value;renderKeep();}break;
     case 'filter':U.filter=t.value;applySeatFilter();break;
-    case 'exOpt':U[t.getAttribute('data-k')]=t.type==='checkbox'?t.checked:t.value;renderKeep();break;
+    case 'exOpt':U[t.getAttribute('data-k')]=t.type==='checkbox'?t.checked:t.value;if(t.getAttribute('data-k')==='exType')U.exSheet=0;renderKeep();break;
     case 'exStudent':U.exStudent=t.value;renderKeep();break;
+    case 'gradeDate':{
+      var gc=curClass(),gs2=gc&&byId(gc,U.student);if(!gs2||!t.value)break;
+      var gg=gs2.grades.find(function(x){return x.id===t.getAttribute('data-gid');});if(!gg)break;
+      var gk=catById(gg.cat);
+      if(gk&&gk.kind==='sym'&&gg.slot==null&&gs2.grades.some(function(x){return x!==gg&&x.cat===gg.cat&&x.slot==null&&x.date===t.value;})){toast('يوجد تفاعل مسجل في هذا التاريخ');renderKeep();break;}
+      gg.date=t.value;markClass(gc.id);renderKeep();break;}
     case 'exPickOne':{var pid=t.getAttribute('data-id'),ix=U.exPick.indexOf(pid);if(t.checked&&ix<0)U.exPick.push(pid);else if(!t.checked&&ix>=0)U.exPick.splice(ix,1);renderKeep();break;}
     case 'manualCat':{var kk=catById(t.value);U.mcat=t.value;U.mmax=null;if(kk&&t.form)t.form.elements.max.value=fmt(kk.max);break;}
     case 'catField':{
