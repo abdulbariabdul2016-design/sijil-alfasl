@@ -1,5 +1,5 @@
 /* خدمة العمل دون اتصال: تحمّل الصفحات وتحدّثها من الشبكة أولاً ثم تعود إلى النسخة المخزنة. */
-const VERSION = 'sijil-v4';
+const VERSION = 'sijil-v5';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -19,6 +19,7 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   const fontHost = url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com';
+  if (url.origin === self.location.origin && url.pathname.startsWith('/api/')) return;
   if (url.origin === self.location.origin) {
     e.respondWith(
       fetch(req)

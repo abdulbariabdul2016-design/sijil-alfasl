@@ -155,11 +155,33 @@ async function flush(){
   }
   P.busy=false;
 }
+function httpDb(){
+  function request(url,options){
+    return fetch(url,options).then(function(res){
+      if(!res.ok){var err=new Error('HTTP '+res.status);err.code=res.status===401?'unauthorized':'http_error';throw err;}
+      return res.status===204?null:res.json();
+    });
+  }
+  return {
+    doc:function(path){
+      var parts=path.split('/');
+      var url='/api/docs/'+encodeURIComponent(parts[0])+'/'+encodeURIComponent(parts[1]);
+      return {
+        get:function(){return request(url).then(function(v){return {exists:v.exists,data:function(){return v.data;}};});},
+        set:function(data){return request(url,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({data:data})});},
+        delete:function(){return request(url,{method:'DELETE'});}
+      };
+    },
+    collection:function(name){
+      return {
+        get:function(){return request('/api/collections/'+encodeURIComponent(name)).then(function(v){return {empty:v.empty,docs:v.docs.map(function(d){return {id:d.id,data:function(){return d.data;}};})};});}
+      };
+    }
+  };
+}
 async function connectDb(){
   try{
-    if(!(window.claude&&window.claude.use))return;
-    var db=await window.claude.use('db');
-    if(!db){setStatus('محفوظ على هذا الجهاز','ok');return;}
+    var db=httpDb();
     P.db=db;
     var res=await Promise.all([db.doc('app/settings').get(),db.collection('classes').get(),db.collection('att').get()]);
     var sSnap=res[0],cSnap=res[1],aSnap=res[2];
@@ -172,7 +194,7 @@ async function connectDb(){
       S=normalize(d);lsSave();ensureCls();render();
     }else if(S.classes.length){markAll();flush();}
     setStatus('تم الحفظ','ok');
-  }catch(e){P.db=null;setStatus('محفوظ على هذا الجهاز','ok');}
+  }catch(e){P.db=null;setStatus('تعذر الاتصال بالخادم: محفوظ محلياً','warn');}
 }
 
 /* ---------- views ---------- */
