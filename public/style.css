@@ -253,3 +253,10 @@ details.bulk summary{cursor:pointer;color:var(--brand);font-weight:600}
 .xp td.num{text-align:center}
 .xp tr.sumrow td{font-weight:600;background:var(--surface2)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* السلوك: خصم بالأحمر */
+.seat.st-d{--sc:var(--bad)}
+.a-d{background:var(--bad-soft);color:var(--bad);font-weight:700}
+.neg{color:var(--bad)}
+.cat.ded{border-color:var(--bad)}
+.periodbox{margin:14px 0;padding:12px;border:1px dashed var(--line,#bfd0ce);border-radius:12px;display:flex;flex-direction:column;gap:10px}

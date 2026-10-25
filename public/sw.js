@@ -1,5 +1,5 @@
 /* خدمة العمل دون اتصال: تحمّل الصفحات وتحدّثها من الشبكة أولاً ثم تعود إلى النسخة المخزنة. */
-const VERSION = 'sijil-v5';
+const VERSION = 'sijil-v7';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {
