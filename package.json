@@ -1,0 +1,16 @@
+{
+  "name": "sijil-alfasl",
+  "version": "2.0.0",
+  "private": true,
+  "description": "سجل الفصل: تسجيل الطلاب والدرجات والحضور مع حفظ على الخادم (Neon)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "dependencies": {
+    "pg": "^8.11.0"
+  }
+}
