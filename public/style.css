@@ -260,3 +260,5 @@ details.bulk summary{cursor:pointer;color:var(--brand);font-weight:600}
 .neg{color:var(--bad)}
 .cat.ded{border-color:var(--bad)}
 .periodbox{margin:14px 0;padding:12px;border:1px dashed var(--line,#bfd0ce);border-radius:12px;display:flex;flex-direction:column;gap:10px}
+.seat.st-g{--sc:var(--brand)}
+.a-g{background:var(--brand-soft);color:var(--brand);font-weight:700}

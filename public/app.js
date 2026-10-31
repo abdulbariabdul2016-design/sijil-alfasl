@@ -35,7 +35,9 @@ var U={tab:'home',cls:null,mapOpen:false,student:null,seg:'grades',gmode:'quick'
 function normalize(d){
   var o={settings:{cats:[]},classes:[],att:{}};
   var cats=d&&d.settings&&Array.isArray(d.settings.cats)&&d.settings.cats.length?d.settings.cats:DEFAULT_CATS;
-  o.settings.cats=cats.map(function(k){var sym=k.kind==='sym',ded=k.kind==='ded';return {id:String(k.id||uid()),name:String(k.name||'نوع'),count:clampI(k.count,1,60,1),max:(sym||ded)?1:(+k.max>0?+k.max:10),kind:sym?'sym':ded?'ded':'num',weight:ded?0:(+k.weight>0?+k.weight:0),group:String(k.group||'')};});
+  o.settings.cats=cats.map(function(k){var sym=k.kind==='sym',ded=k.kind==='ded';return {id:String(k.id||uid()),name:String(k.name||'نوع'),count:clampI(k.count,1,60,1),max:(sym||ded)?1:(+k.max>0?+k.max:10),kind:sym?'sym':ded?'ded':'num',weight:ded?0:(+k.weight>0?+k.weight:0),group:String(k.group||''),tab:(!sym&&!ded)&&!!k.tab};});
+  var mo=d&&d.settings&&d.settings.modes&&typeof d.settings.modes==='object'?d.settings.modes:{};
+  o.settings.modes={att:mo.att!==false,int:mo.int!==false,beh:mo.beh!==false,edit:mo.edit!==false};
   (d&&Array.isArray(d.classes)?d.classes:[]).forEach(function(c){
     o.classes.push({
       id:String(c.id||uid()).replace(/[^A-Za-z0-9]/g,'')||uid(),name:String(c.name||'فصل'),subject:String(c.subject||''),
@@ -179,7 +181,7 @@ async function flush(){
   P.busy=true;
   try{
     var d=P.dirty;
-    if(d.settings){d.settings=false;await P.db.doc('app/settings').set({cats:S.settings.cats});}
+    if(d.settings){d.settings=false;await P.db.doc('app/settings').set({cats:S.settings.cats,modes:S.settings.modes||{}});}
     for(var id in d.classes){delete d.classes[id];var c=S.classes.find(function(x){return x.id===id;});if(c)await P.db.doc('classes/'+id).set(clone(c));}
     for(var key in d.att){delete d.att[key];var parts=key.split('_');var days={};var m=S.att[parts[0]]||{};for(var dt in m){if(dt.indexOf(parts[1])===0)days[dt]=m[dt];}await P.db.doc('att/'+key).set({cls:parts[0],month:parts[1],days:days});}
     for(var path in d.del){delete d.del[path];await P.db.doc(path).delete();}
@@ -359,6 +361,56 @@ function classPick(){
 function vNoClass(){
   return '<div class="head"><h1>لا توجد فصول بعد</h1></div><p class="lead">أنشئ فصلاً من الرئيسية أولاً، ثم عد إلى هذا التبويب.</p><div class="row"><button type="button" class="btn pri" data-act="goHome">الذهاب إلى الرئيسية</button></div>';
 }
+function mapModes(){
+  var m=S.settings.modes||{},out=[['open','فتح الطالب']];
+  if(m.att!==false)out.push(['att','تسجيل الحضور']);
+  if(m.int!==false)out.push(['int','تسجيل التفاعل']);
+  if(m.beh!==false)out.push(['beh','تسجيل السلوك']);
+  S.settings.cats.forEach(function(k){if(k.tab&&k.kind!=='sym'&&k.kind!=='ded')out.push(['c:'+k.id,k.name]);});
+  if(m.edit!==false)out.push(['edit','تعديل الطلاب']);
+  return out;
+}
+function modeOk(x){return mapModes().some(function(m){return m[0]===x;});}
+function isCatMode(){return String(U.mapMode).indexOf('c:')===0;}
+function mapTally(c,date){
+  if(U.mapMode==='int'||U.mapMode==='edit')return '';
+  if(U.mapMode==='beh')return behTally(c,date);
+  if(isCatMode()){
+    var k=catById(U.mapMode.slice(2));if(!k)return '';
+    var n=0,sum=0,cnt=0;c.students.forEach(function(s){var g=s.grades.filter(function(x){return x.cat===k.id&&x.date===date;});if(g.length){n++;g.forEach(function(x){sum+=x.score;cnt++;});}});
+    return '<div class="tally"><span class="tl a-g"><b>'+n+'</b> طالب لديهم درجة</span><span class="tl a-n"><b>'+(c.students.length-n)+'</b> بلا درجة</span>'+(cnt?'<span class="tl a-g">متوسط اليوم <b>'+fmt(sum/cnt)+'</b> من '+fmt(k.max)+'</span>':'')+'</div>';
+  }
+  return tally(c,date);
+}
+function catModal(c,sid,k){
+  var s=byId(c,sid);if(!s||!k)return;U.catSid=sid;U.catId=k.id;
+  var list=s.grades.filter(function(g){return g.cat===k.id&&g.date===U.attDate;}),btns='',top=Math.floor(k.max);
+  if(k.max<=20){
+    for(var v=0;v<=top;v++)btns+='<button type="button" class="pn" data-act="catAdd" data-v="'+v+'">'+v+'</button>';
+    if(top!==k.max)btns+='<button type="button" class="pn" data-act="catAdd" data-v="'+k.max+'">'+fmt(k.max)+'</button>';
+  }else{[100,90,80,70,60,50].forEach(function(p){var v=r2(k.max*p/100);btns+='<button type="button" class="pn" data-act="catAdd" data-v="'+v+'">'+fmt(v)+'</button>';});}
+  modal('<h2>'+esc(k.name)+': '+esc(s.name)+'</h2><p class="muted">التاريخ '+esc(U.attDate)+' · الدرجة من '+fmt(k.max)+'</p>'+
+    '<div class="pns" style="margin:12px 0">'+btns+'</div>'+
+    '<form class="padform" data-form="catcustom"><input name="v" type="number" step="any" min="0" max="'+k.max+'" placeholder="قيمة أخرى" aria-label="قيمة أخرى"><button class="btn sm">تسجيل</button></form>'+
+    (list.length?'<div class="tablewrap" style="margin-top:12px"><table><tbody>'+list.map(function(g){return '<tr><td class="num"><b>'+fmt(g.score)+'</b> / '+fmt(g.max)+'</td><td><button type="button" class="btn ghost sm" data-act="catDel" data-gid="'+g.id+'">حذف</button></td></tr>';}).join('')+'</tbody></table></div>':'')+
+    '<div class="row" style="margin-top:12px"><button type="button" class="btn ghost" data-act="mcancel">إغلاق</button></div>');
+  if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();
+}
+function addCatGrade(c,s,k,v){
+  if(!s||!k)return;
+  if(!(v>=0)||v>k.max){toast('الدرجة يجب أن تكون بين 0 و '+fmt(k.max));return;}
+  var ng={id:uid(),cat:k.id,slot:null,score:v,max:k.max,date:U.attDate,note:''};
+  s.grades.push(ng);markClass(c.id);closeModal();renderKeep();
+  toast('سُجّلت '+fmt(v)+' في «'+k.name+'» للطالب '+s.name,function(){s.grades=s.grades.filter(function(x){return x!==ng;});markClass(c.id);renderKeep();});
+}
+function modesCard(){
+  var m=S.settings.modes||{};
+  var box=function(attrs,on,label){return '<label class="pk"><input type="checkbox" '+attrs+(on?' checked':'')+'> '+esc(label)+'</label>';};
+  var nums=S.settings.cats.filter(function(k){return k.kind!=='sym'&&k.kind!=='ded';});
+  return '<section class="card"><h2>تبويبات خريطة الجلوس</h2><p class="muted" style="margin-top:6px">اختر ما يظهر في الشريط العلوي لخريطة الجلوس بجانب «فتح الطالب». فعّل أي نوع درجة (اختبار، واجب…) ليُسجَّل بضغطة على مقعد الطالب مع اختيار التاريخ من أعلى الخريطة.</p>'+
+    '<div class="pickbox">'+box('data-ch="modeOpt" data-k="att"',m.att!==false,'تسجيل الحضور')+box('data-ch="modeOpt" data-k="int"',m.int!==false,'تسجيل التفاعل')+box('data-ch="modeOpt" data-k="beh"',m.beh!==false,'تسجيل السلوك')+box('data-ch="modeOpt" data-k="edit"',m.edit!==false,'تعديل الطلاب (إضافة وحذف)')+
+    nums.map(function(k){return box('data-ch="catTab" data-id="'+k.id+'"',!!k.tab,k.name);}).join('')+'</div></section>';
+}
 function behTally(c,date){
   var n=0,tot=0;c.students.forEach(function(s){var a=dedOn(s,date);if(a.length){n++;tot+=a.reduce(function(x,g){return x+g.score;},0);}});
   return '<div class="tally"><span class="tl a-d"><b>'+n+'</b> طالب عليهم خصم</span><span class="tl a-d"><b>'+fmt(tot)+'</b> مجموع الخصم في هذا اليوم</span></div>';
@@ -422,16 +474,18 @@ function vHome(){
   return '<div class="head"><h1>الفصول</h1><button type="button" class="btn pri" data-act="newClass">+ فصل جديد</button></div><p class="lead">اضغط على فصل لفتح خريطة الجلوس.</p><div class="cgrid">'+S.classes.map(classCard).join('')+'</div>';
 }
 function seatCard(c,s,date){
-  var st=statsFor(s),pct=st.pct,a=attOn(c,date,s.id),im=U.mapMode==='int',bm=U.mapMode==='beh',sg=null,dd=0;
+  var st=statsFor(s),pct=st.pct,a=attOn(c,date,s.id),im=U.mapMode==='int',bm=U.mapMode==='beh',sg=null,dd=0,cm=isCatMode(),ck=cm?catById(U.mapMode.slice(2)):null,gs=ck?s.grades.filter(function(g){return g.cat===ck.id&&g.date===date;}):[];
   if(im){var sk=symCat();sg=sk?symGrade(s,sk,date):null;a=sg?(sg.score>=0.99?'p':sg.score>0?'l':'a'):'';}
   if(bm){dd=dedOn(s,date).reduce(function(x,g){return x+g.score;},0);a=dd>0?'d':'';}
+  if(cm)a=gs.length?'g':'';
   var tone=pct==null?'none':pct>=85?'ok':pct>=60?'warn':'bad';
   return '<button type="button" class="seat st-'+(a||'n')+'" draggable="true" data-act="seat" data-sid="'+s.id+'" data-slot="'+s.seat+'">'+
     '<span class="ring t-'+tone+'" style="--p:'+(pct==null?0:Math.round(pct))+'"><b>'+(pct==null?'–':Math.round(pct))+'</b></span>'+
     '<span class="sname">'+esc(s.name)+'</span>'+
-    '<span class="sline"><span class="achip a-'+(a||'n')+'">'+(bm?(dd>0?'− '+fmt(dd):'لا خصم'):im?(sg?symOf(sg.score)+' '+(sg.score>=0.99?'ممتازة':sg.score>0?'عادية':'لا مشاركة'):'غير مسجل'):(a?ATT[a].t:'غير مسجل'))+'</span><span class="num">مقعد '+(s.seat+1)+'</span></span></button>';
+    '<span class="sline"><span class="achip a-'+(a||'n')+'">'+(U.mapMode==='edit'?'تعديل':cm?(gs.length?gs.map(function(g){return fmt(g.score);}).join('، '):'لا درجة'):bm?(dd>0?'− '+fmt(dd):'لا خصم'):im?(sg?symOf(sg.score)+' '+(sg.score>=0.99?'ممتازة':sg.score>0?'عادية':'لا مشاركة'):'غير مسجل'):(a?ATT[a].t:'غير مسجل'))+'</span><span class="num">مقعد '+(s.seat+1)+'</span></span></button>';
 }
 function vMap(){
+  if(!modeOk(U.mapMode))U.mapMode='open';
   var c=curClass(),date=U.attDate,total=cellCount(c),bySeat={};
   c.students.forEach(function(s){bySeat[s.seat]=s;});
   var seats='';
@@ -440,14 +494,14 @@ function vMap(){
   return '<div class="maphead"><div><button type="button" class="btn ghost sm" data-act="mapBack">→ الفصول</button>'+
     '<h1 style="margin-top:8px">خريطة الجلوس التفاعلية<span class="sub">'+esc(c.name)+(c.subject?' · '+esc(c.subject):'')+' · '+c.students.length+' طالب</span></h1></div>'+
     '<div class="mapctl"><label class="f inline">التاريخ<input type="date" value="'+date+'" data-ch="attDate"></label>'+
-    '<div class="seg"><button type="button" data-act="mode" data-m="open" class="'+(U.mapMode==='open'?'on':'')+'">فتح الطالب</button><button type="button" data-act="mode" data-m="att" class="'+(U.mapMode==='att'?'on':'')+'">تسجيل الحضور</button><button type="button" data-act="mode" data-m="int" class="'+(U.mapMode==='int'?'on':'')+'">تسجيل التفاعل</button><button type="button" data-act="mode" data-m="beh" class="'+(U.mapMode==='beh'?'on':'')+'">تسجيل السلوك</button></div>'+
+    '<div class="seg">'+mapModes().map(function(m){return '<button type="button" data-act="mode" data-m="'+esc(m[0])+'" class="'+(U.mapMode===m[0]?'on':'')+'">'+esc(m[1])+'</button>';}).join('')+'</div>'+'<button type="button" class="btn sm" data-act="addNew">+ طالب</button>'+
     '<label class="f inline">عرض<select data-ch="filter">'+filters.map(function(f){return '<option value="'+f[0]+'"'+(U.filter===f[0]?' selected':'')+'>'+f[1]+'</option>';}).join('')+'</select></label>'+
     '<input type="search" id="seatQ" placeholder="بحث عن طالب" value="'+esc(U.q)+'" aria-label="بحث عن طالب"></div></div>'+
-    (U.mapMode==='int'?'':U.mapMode==='beh'?behTally(c,date):tally(c,date))+
+    mapTally(c,date)+
     roomShell(seats,mapCols(c.cols))+
     '<div class="legend"><span style="--c:var(--ok)">حاضر</span><span style="--c:var(--bad)">غائب</span><span style="--c:var(--chalk)">متأخر</span><span style="--c:var(--info)">بعذر</span>'+
     '<span>الحلقة = نسبة درجات الطالب</span>'+
-    '<span>'+(U.mapMode==='att'?'اضغط على المقعد لتغيير حالة الحضور (حاضر ← غائب ← متأخر ← بعذر ← مسح)':U.mapMode==='beh'?'اضغط على المقعد لخصم نصف درجة أو درجة بسبب السلوك، ويظهر الخصم بالأحمر ويُطرح من مجموع الطالب':U.mapMode==='int'?'اضغط على المقعد لتسجيل تفاعل هذه الحصة: + ممتازة ← ✓ عادية ← − لا مشاركة ← مسح. سجّل 5 أو 6 طلاب في الحصة بالتناوب':'اضغط على الطالب لإدخال درجاته · اسحب مقعداً لتبديل المكان')+'</span></div>';
+    '<span>'+(U.mapMode==='edit'?'اضغط على مقعد لتعديل اسم الطالب أو رقمه أو مقعده أو حذفه، واضغط مقعداً فارغاً لإضافة طالب. حذف طالب لا يمس بقية الفصل':isCatMode()?'اضغط على المقعد لتسجيل درجة «'+esc((catById(U.mapMode.slice(2))||{}).name||'')+'» بتاريخ اليوم المحدد، ويمكن تسجيل أكثر من درجة في اليوم':U.mapMode==='att'?'اضغط على المقعد لتغيير حالة الحضور (حاضر ← غائب ← متأخر ← بعذر ← مسح)':U.mapMode==='beh'?'اضغط على المقعد لخصم نصف درجة أو درجة بسبب السلوك، ويظهر الخصم بالأحمر ويُطرح من مجموع الطالب':U.mapMode==='int'?'اضغط على المقعد لتسجيل تفاعل هذه الحصة: + ممتازة ← ✓ عادية ← − لا مشاركة ← مسح. سجّل 5 أو 6 طلاب في الحصة بالتناوب':'اضغط على الطالب لإدخال درجاته · اسحب مقعداً لتبديل المكان')+'</span></div>';
 }
 function applySeatFilter(){
   var c=curClass();if(!c)return;var q=normAr(U.q.trim()),f=U.filter;
@@ -698,7 +752,7 @@ function vSettings(){
     '<section class="card"><div class="cardhead"><h2>أنواع الدرجات</h2></div><p class="muted">حدّد نوع الدرجة وكم درجة تُسجَّل منه، والدرجة الكاملة لكل درجة. تظهر هذه الأنواع في الإدخال السريع والإدخال اليدوي وفي التصدير.</p><p class="muted" style="margin-top:6px"><b>الدرجة المعتمدة:</b> إن كتبتَ رقماً (مثل 6) تُحوَّل درجات النوع إلى هذا الرقم بالمعادلة (مجموع درجات الطالب ÷ الممكن) × الرقم، وغياب الطالب بعذر لا يُحسب صفراً لأن المتوسط يؤخذ من الدرجات المدخلة فقط. <b>المجموعة:</b> الأنواع التي تحمل اسم مجموعة واحداً تُجمع معاً (مثل المشاركة اليومية من 12). <b>رموز + ✓ −:</b> للتفاعل داخل الصف، وتُسجَّل من خريطة الجلوس (وضع تسجيل التفاعل). <b>خصم (سلوك):</b> يُسجَّل من وضع تسجيل السلوك بنصف درجة أو درجة، ويُطرح بالأحمر من مجموع المجموعة التي يحمل اسمها (اتركها فارغة ليُطرح من الإجمالي فقط).</p>'+
     '<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>نوع الدرجة</th><th>طريقة الإدخال</th><th>عدد الخانات الظاهرة</th><th>الدرجة الكاملة لكل درجة</th><th>الدرجة المعتمدة</th><th>المجموعة</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
     '<div class="row" style="margin-top:12px"><button type="button" class="btn pri" data-act="addCat">+ إضافة نوع درجة</button><button type="button" class="btn" data-act="tplDaily">إضافة قالب المشاركة اليومية (12 درجة)</button></div></section>'+
-    clsCard+syncCard()+
+    modesCard()+clsCard+syncCard()+
     '<section class="card"><h2>نسخة احتياطية</h2><p class="muted" style="margin-top:6px">نزّل نسخة من كل الفصول والطلاب والدرجات والحضور، أو استعدها من ملف سابق.</p>'+
     '<div class="row"><button type="button" class="btn" data-act="backup">تنزيل نسخة احتياطية</button><button type="button" class="btn" data-act="restorePick">استعادة من ملف</button><input type="file" id="restoreIn" accept=".json,application/json" hidden data-ch="restore"></div></section>';
 }
@@ -715,7 +769,7 @@ function studentModal(c,s,seat){
     '<label class="f">اسم الطالب<input name="name" required value="'+esc(s?s.name:'')+'" autocomplete="off"></label>'+
     '<label class="f">رقم الطالب (اختياري)<input name="num" value="'+esc(s?s.num:'')+'" autocomplete="off"></label>'+
     '<label class="f">رقم المقعد<input name="seat" type="number" min="1" value="'+(s?s.seat+1:(seat!=null?seat+1:''))+'" placeholder="تلقائي"></label>'+
-    '<div class="row"><button class="btn pri">حفظ</button><button type="button" class="btn ghost" data-act="mcancel">إلغاء</button></div></form>');
+    '<div class="row"><button class="btn pri">حفظ</button><button type="button" class="btn ghost" data-act="mcancel">إلغاء</button>'+(s?'<button type="button" class="btn danger" data-act="delStudent" data-id="'+s.id+'" style="margin-inline-start:auto">حذف الطالب</button>':'')+'</div></form>');
 }
 
 /* ---------- export (Excel) ---------- */
@@ -1110,8 +1164,15 @@ async function act(a,t,e){
       if(U.mapMode==='att'){var order=['','p','a','l','e'],cur=attOn(c,U.attDate,sid);setAtt(c,U.attDate,sid,order[(order.indexOf(cur)+1)%order.length]);renderKeep();}
       else if(U.mapMode==='int'){cycleSym(c,sid);}
       else if(U.mapMode==='beh'){behModal(c,sid);}
+      else if(U.mapMode==='edit'){studentModal(c,byId(c,sid));}
+      else if(isCatMode()){catModal(c,sid,catById(U.mapMode.slice(2)));}
       else{U.student=sid;U.seg='grades';U.pad=null;render(true);}
       break;}
+    case 'addNew':studentModal(c,null,null);break;
+    case 'catAdd':{addCatGrade(c,byId(c,U.catSid),catById(U.catId),parseFloat(t.getAttribute('data-v')));break;}
+    case 'catDel':{
+      var cds=byId(c,U.catSid),cdg=t.getAttribute('data-gid');
+      if(cds){cds.grades=cds.grades.filter(function(x){return x.id!==cdg;});markClass(c.id);renderKeep();catModal(c,U.catSid,catById(U.catId));}break;}
     case 'behAdd':{
       var bs=byId(c,t.getAttribute('data-sid')||U.behSid);if(!bs)break;
       var bk=behCat(true),bv=parseFloat(t.getAttribute('data-v')),bn=$('#behNote'),ng={id:uid(),cat:bk.id,slot:null,score:bv,max:1,date:U.attDate,note:bn?bn.value.trim():''};
@@ -1207,6 +1268,8 @@ function onChange(k,t){
       var gk=catById(gg.cat);
       if(gk&&gk.kind==='sym'&&gg.slot==null&&gs2.grades.some(function(x){return x!==gg&&x.cat===gg.cat&&x.slot==null&&x.date===t.value;})){toast('يوجد تفاعل مسجل في هذا التاريخ');renderKeep();break;}
       gg.date=t.value;markClass(gc.id);renderKeep();break;}
+    case 'modeOpt':{if(!S.settings.modes)S.settings.modes={att:true,int:true,beh:true,edit:true};S.settings.modes[t.getAttribute('data-k')]=t.checked;markSettings();renderKeep();break;}
+    case 'catTab':{var tcat=catById(t.getAttribute('data-id'));if(tcat){tcat.tab=t.checked;markSettings();renderKeep();}break;}
     case 'exPerOne':{var pl=U.exPer==='months'?U.exMonths:U.exWeeks,pv=t.getAttribute('data-v'),pi=pl.indexOf(pv);if(t.checked&&pi<0)pl.push(pv);else if(!t.checked&&pi>=0)pl.splice(pi,1);renderKeep();break;}
     case 'exPickOne':{var pid=t.getAttribute('data-id'),ix=U.exPick.indexOf(pid);if(t.checked&&ix<0)U.exPick.push(pid);else if(!t.checked&&ix>=0)U.exPick.splice(ix,1);renderKeep();break;}
     case 'manualCat':{var kk=catById(t.value);U.mcat=t.value;U.mmax=null;if(kk&&t.form)t.form.elements.max.value=fmt(kk.max);break;}
@@ -1274,6 +1337,7 @@ function onSubmit(name,f){
       if(score>max){toast('درجة الطالب أكبر من الدرجة النهائية');return;}
       stu.grades.push({id:uid(),cat:k.id,slot:null,score:score,max:max,date:String(fd.get('date')||today()),note:String(fd.get('note')||'').trim()});
       U.mcat=k.id;U.mmax=max;markClass(c.id);U.focus='#mScore';renderKeep();toast('تم تسجيل الدرجة');break;}
+    case 'catcustom':{var ccv=parseFloat(fd.get('v'));if(!isFinite(ccv)){toast('اكتب الدرجة');return;}addCatGrade(c,byId(c,U.catSid),catById(U.catId),ccv);break;}
     case 'padcustom':{var v=parseFloat(fd.get('v'));if(!isFinite(v)){toast('اكتب الدرجة');return;}applyPad(v);break;}
   }
 }
